@@ -73,7 +73,7 @@ Usage:
     Saves alerts manually.  (This should happen when exiting Hexchat)
 """
 __module_name__ = "alerts"
-__module_version__ = "0.2"
+__module_version__ = "0.3"
 __module_description__ = "Custom highlighting and alert messages -- by Dewin"
 
 
@@ -368,10 +368,10 @@ class Alert(object):
         rv = Alert(d['n'])
         if 'f' in d:
             fmt, *parts = d['f'].split(",")
+            if len(parts) > 0 and len(parts[0]):
+                rv.color = int(parts[0])
             if len(parts) > 1 and len(parts[1]):
-                rv.color = int(parts[1])
-            if len(parts) > 2 and len(parts[2]):
-                rv.line_color = int(parts[2])
+                rv.line_color = int(parts[1])
             for attr in cls.FORMAT_ATTRIBUTES:  # Uses bBiIuUrR
                 if attr[0].lower() in fmt:
                     setattr(rv, attr, True)
