@@ -1,79 +1,131 @@
 """
-Usage:
-
-/alerts add <name>
+** Creating and Managing Alerts **
+/alerts add <alert>
     Creates a new alert named 'name'.
     
-    New alerts are initialized with:
-        /alert set <name> pattern <name>
-        /alert set <name> sound off
-        /alert set <name> word on
+    New alerts are initialized using their name as a pattern, equivalent to the following commands:
+        /alert pattern <alert> pattern <alert>
+        /alert sound <alert> off
+        /alert set <alert> word on
     
-/alerts del[ete] <names...>|ALL
-    Deletes alert(s) in the list of names, separated by spaces.
-    ALL: Deletes all alerts.
-    
-/alerts copy <name> <newname>
-    Duplicates all settings of an alert to a new alert.
-    
-/alerts enable <names...>|ALL
-/alerts disable <names...>|ALL
-/alerts on <names...>|ALL
-/alerts off <names...>|ALL
-    Enable or disable the selected alert(s).
+/alerts del[ete] <alerts...>|ALL
+    Deletes alert(s) in the list of names, separated by spaces.  Use "ALL" to delete all alerts.
 
-/alerts mute <names...>|ALL
-/alerts unmute <names...>|ALL
-    Enables or disables sounds for the selected alerts (without clearing any sound file associations)
+/alerts copy <alert> <new>
+    Duplicates all settings of <alert> to a new alert named <new>.  The new alert's pattern is then set to <new>.
 
-/alerts set <name> sound <file>|OFF
-    Associates <file> with the associated alert.  "OFF" disables sound for this alert.  "DEFAULT" chooses the default Hexchat alert sound.
-    <file> will be searched for in the following locations (in order):
-        Windows: %APPDATA%\Hexchat\Sounds, %ProgramFiles%\Hexchat\Sounds, %ProgramFiles(x86)%\Hexchat\Sounds
+/alerts enable <alerts...>|ALL
+/alerts disable <alerts...>|ALL
+/alerts on <alerts...>|ALL
+/alerts off <alerts...>|ALL
+    Enables or disable the selected alert(s).
+
+** Pattern Matching **
+/alerts pattern <alert> [<pattern>]
+    Sets the pattern for alert, or shows the current pattern if a new pattern is not specified.
+
+    Patterns can contain any text.  Simple wildcards (*) are permitted.  Setting a pattern clears any regex (if one was set).
+
+    Patterns only match on word boundaries by default, but see the 'word' setting.
+
+/alerts regex <alert> [<regex>]
+    Sets a regular expression to match for this alert, or shows the current regex if a new regex is not specified.
+
+    Setting a regex clears any pattern (if one was was set).
+
+** Sounds **
+/alerts sound <alert> [<soundfile>|OFF]
+    Associates <soundfile> with the associated alert, or shows the current sound if a new sound is not specified.  "OFF" disables sound for this alert.
+
+    <soundfile> will be searched for in the following locations (in order):
+        Windows: %APPDATA%\HexChat\Sounds, %ProgramFiles%\HexChat\Sounds, %ProgramFiles(x86)%\HexChat\Sounds
         POSIX-like: ~/.config/hexchat/sounds, /sbin/HexChat/share/sounds, /usr/sbin/HexChat/share/sounds, /usr/local/bin/HexChat/share/sounds
 
-/alerts set <name> pattern <pattern>
-    Sets the pattern for alert.  This can be any text.  Simple wildcards (*) are permitted.
-    This clears anything set using set <name> regex
-    
-/alerts set <name> word ON|OFF
-    Determines whether the pattern matches on word boundaries only ("ON") or anywhere ("OFF")
-    If pattern is "Jon" and input text is "Jonathan", the input will match if word is OFF, but not if word is ON.
-    Only used when using a pattern.
-    
-/alerts set <name> regex <expression>
-    Matches text matching a particular regular expression.
-    This clears anything set using set <name> pattern
-    
-/alerts set <name> bold ON|OFF|LINE
-/alerts set <name> italic ON|OFF|LINE
-/alerts set <name> underline ON|OFF|LINE
-/alerts set <name> reverse ON|OFF|LINE
-    Formats output text bold, italic, underline or reverse color.
-    When "ON", formats just the text the matched the pattern or parenthesized portion of the regex.
-    When "LINE", matches the entire line.
-    
-    If any of these are set to LINE, any formatting in the original text is stripped.
+    HexChat must be capable of playing the sound using /SPLAY <soundfile>.  On Windows, this means just .wav files, other platform support may vary.
 
-/alerts set <name> color <colornumber>|OFF
-/alerts set <name> linecolor <colornumber>|OFF
-    Changes the color of text output, or removes this setting if 'OFF' is specified.
+/alerts mute <alerts...>|ALL
+/alerts unmute <alerts...>|ALL
+    Enables or disables sounds for the selected alerts (without clearing any sound file associations).
+    Use this to temporarily silence alerts.
 
-/alerts dump <names...>|ALL
+** Colors, Formatting and Other Settings **
+/alerts set <alert> <setting> [<value> [<setting> <value> [...]]]
+    Changes one or more settings on an alert.  See the Alert Settings sections for a list of what can be set.
+
+    Omitting <value> makes this equivalent to /alerts show
+
+/alerts show <alert> <settings...>|ALL
+    Shows the current value of one or more settings on an alert, or all settings if ALL is specified.
+
+/alerts clear <alert> <settings...>|ALL
+    Equivalent to /alerts set <alert> off, for each setting specified.  Does not apply to regex or pattern.
+
+/alerts preview <alerts...>|ALL
+    Previews one or more alerts.  If a single alert is specified, sound will be played as well.
+
+/alerts showcolors
+    Show all possible colors.
+
+** Import/Export and Sharing **
+/alerts dump <alerts...>|ALL
     Outputs the commands required to re-create the specified alert(s).
-    Separate multiple alerts with spaces.
-    
-/alerts export <names...>|ALL
+
+/alerts export <alerts...>|ALL
     Outputs text that can be used with /alerts import to create the specified alert(s).
 
 /alerts import <json>
     Imports alert(s)
 
+/alerts share <alerts...>
+    Shares alerts with the current channel.  (Alters text in the HexChat input box.)
+    NOTE: This sends one message PER ALERT.  Don't spam your channel!  For this reason, there is no /alerts share all
+
 /alerts save
-    Saves alerts manually.  (This should happen when exiting Hexchat)
+    Saves alerts manually.  (This should happen automatically when exiting HexChat)
+
+** Alert Settings **
+The following settings can manipulated using /alerts set, /alerts show and /alerts clear:
+
+:word ON|OFF
+    Determines whether the pattern matches on word boundaries only ("ON") or anywhere ("OFF")
+    If pattern is "Jon" and input text is "Jonathan", the input will match if word is OFF, but not if word is ON.
+    Only used with patterns.  Ignored with a regex.
+
+:bold ON|OFF|LINE
+:italic ON|OFF|LINE
+:underline ON|OFF|LINE
+:reverse ON|OFF|LINE
+    Formats output text bold, italic, underline or reverse color.
+    When "ON", formats just the text the matched the pattern or regex.
+    When "LINE", matches the entire line.
+    
+    If any of these are set to LINE, any formatting in the original text is stripped.
+
+:color [<foreground>][,<background>]|OFF
+    Sets the foreground and background color of text output, or removes this setting if 'OFF' is specified.
+
+    /alerts set alert color 4  - Sets foreground color to 4
+    /alerts set alert color ,8  - Sets background color to 8, keeps default foreground color
+    /alerts set alert color 4,8  - Sets foreground to 4, background to 8
+    /alerts set alert color off - Disables colors
+
+:linecolor [<foreground>][,<background>]|OFF
+    As per color, but affects the entire line.  If enabled, any formatting in the original text is stripped.
+
+:enabled ON|OFF
+    Determines whether this alert is enabled or not.  See also /alerts enable|on|off|disable
+
+:mute ON|OFF
+    Determines whether this alert is muted or not.  See also /alerts mute|unmute
+
+:pattern <pattern>
+:regex <regex>
+:sound <sound>
+    See /alerts pattern, /alerts regex and /alerts sound for instructions.  These settings must be the last setting
+    on the line when using /alerts set.
 """
 __module_name__ = "alerts"
-__module_version__ = "0.3"
+__module_version__ = "0.4.20160108"
 __module_description__ = "Custom highlighting and alert messages -- by Dewin"
 
 
@@ -84,58 +136,66 @@ import hexchat
 import re
 import os
 import functools
-from threading import Thread
+# from threading import Thread
 from collections import OrderedDict
 import inspect
 import json
+import itertools
+import string
 
+try:
+    from collections.abc import Iterable
+except ImportError:
+    from collections import Iterable
 
 def playsound(filename):
     """
-    Plays a sound using a OS-dependant methodology.
+    Plays a sound.
 
-    The default implementation does nothing.
-    :param filename: Filename of sound to play.
-    :return:
+    The default implementation uses hexchat's /splay command.
+
+    Bugs: Won't handle filenames with quotes in them, but not much does.  Blame Hexchat.
     """
-    return
+    hexchat.command("splay \"{}\"".format(filename))
+
 sound_search_path = []
+try:
+    use_old_sounds = bool(int(hexchat.get_pluginpref("python_alerts_use_old_sounds")))
+except Exception:
+    use_old_sounds = False
 
 if os.name == "nt":
-    # Winsound is installed by default on Windows platforms
-    import winsound
-    def playsound(filename):
-        winsound.PlaySound(filename, winsound.SND_FILENAME ^ winsound.SND_ASYNC)
-
     sound_search_path = [
         "%APPDATA%\\Hexchat\\Sounds", "%ProgramFiles%/Hexchat/Sounds", "%ProgramFiles(x86)%/Hexchat/Sounds"
     ]
-elif os.name == "posix":
-    try:
-        import pyxine
-    except ImportError:
-        print("alerts: Pyxine is missing!  Sound alerts will not be available.")
-        print("Install xine, then run 'pip install pyxine' to use sounds in this plugin.")
-    else:
+    # Winsound is installed by default on Windows platforms
+    if use_old_sounds:
+        import winsound
         def playsound(filename):
-            xine = pyxine.Xine()
-            stream = xine.stream_new()
-            stream.open(filename)
-            stream.Play()
+            winsound.PlaySound(filename, winsound.SND_FILENAME ^ winsound.SND_ASYNC)
 
-        sound_search_path = [
-            "~/.config/hexchat/sounds", "/sbin/HexChat/share/sounds", "/usr/sbin/HexChat/share/sounds",
-            "/usr/local/bin/HexChat/share/sounds",
-        ]
+elif os.name == "posix":
+    sound_search_path = [
+        "~/.config/hexchat/sounds", "/sbin/HexChat/share/sounds", "/usr/sbin/HexChat/share/sounds",
+        "/usr/local/bin/HexChat/share/sounds",
+    ]
 
-else:
-    print("alerts: Unknown platform.  Sound alerts will not be available.")
+    if use_old_sounds:
+        try:
+            import pyxine
+        except ImportError:
+            print("alerts: Pyxine is missing!  Sound alerts will not be available.")
+            print("Install xine, then run 'pip install pyxine' to use sounds in this plugin.")
+        else:
+            def playsound(filename):
+                xine = pyxine.Xine()
+                stream = xine.stream_new()
+                stream.open(filename)
+                stream.Play()
 
 sound_search_path = list(os.path.expandvars(os.path.expanduser(path)) for path in sound_search_path)
-
 # Since we reformat text before sending it, we maintain a blacklist of messages we emit.
 # An item is removed from this blacklist is cleared when a matching message is received.
-# temporary_blacklist = []
 
 
 class IRC(object):
@@ -146,9 +206,38 @@ class IRC(object):
     COLOR = '\003'
     ORIGINAL = '\017'
 
+    MINCOLOR = 0
+    MAXCOLOR = 99
+
     @classmethod
-    def color(cls, c):
-        return cls.COLOR + "{:02d}".format(c)
+    def color(cls, fg=None, bg=None):
+        if isinstance(fg, Iterable) and bg is None:
+            return cls.color(*fg)
+
+        if fg is None and bg is None:
+            return ""
+        fg = "" if fg is None else "{:02d}".format(fg)
+        bg = "" if bg is None else "{:02d}".format(bg)
+        rv = cls.COLOR + fg
+        if bg:
+            rv += "," + bg
+        return rv
+
+
+class Color(tuple):
+    def str(self, sep=';', condense=True):
+        rv = sep.join("" if x is None else str(x) for x in self)
+        if condense:
+            return rv.rstrip(sep)
+        return rv
+
+    def __str__(self):
+        return self.str()
+
+    @classmethod
+    def fromstring(cls, s, sep=';'):
+        color = list(None if not x.strip() else int(x.strip()) for x in s.split(sep, 2))
+        return Color(color[:2])
 
 
 class Alert(object):
@@ -157,6 +246,9 @@ class Alert(object):
     """
     LINE = object()  # Symbol
     FORMAT_ATTRIBUTES = ('bold', 'italic', 'underline', 'reverse')
+    BOOLEAN_ATTRIBUTES = ('word', 'mute', 'enabled')
+    COLOR_ATTRIBUTES = ('color', 'linecolor')
+    NONECOLORTUPLE = (None, None)
 
     def __init__(self, name):
         self.name = name
@@ -169,7 +261,7 @@ class Alert(object):
         self.underline = False
         self.reverse = False
         self.color = None
-        self.line_color = None
+        self.linecolor = None
 
         self._sound = None
         self.abs_sound = None
@@ -213,12 +305,12 @@ class Alert(object):
         self.strip = 0
         if lp:
             self.strip |= 2  # Strip formatting
-        if self.line_color is not None:
+        if self.linecolor is not None:
             self.strip |= 1  # Strip colors
 
         # Line colors
-        if self.line_color is not None:
-            lp += IRC.color(self.line_color)
+        if self.linecolor is not None:
+            lp += IRC.color(self.linecolor)
 
         # Suffixes
         if lp:
@@ -227,13 +319,13 @@ class Alert(object):
             # Calculate the optimal suffix based on line- and highlight-formatting
             if not mp and self.color is None:
                 ms = ''
-            elif self.color is not None and self.color != self.line_color:
-                if self.line_color is None:
+            elif self.color is not None and self.color != self.linecolor:
+                if self.linecolor is None:
                     # No way to know what the original color was, so reset to defaults and reset line_prefix
                     ms = IRC.ORIGINAL + lp
                 else:
                     # Don't care what the original color was, change to line color and toggle anything in prefix
-                    ms = mp + IRC.color(self.line_color)
+                    ms = mp + IRC.color(self.linecolor)
             else:
                 # No colors are involved, just repeat prefix to undo anything it did
                 ms = mp
@@ -242,13 +334,17 @@ class Alert(object):
             ms = IRC.ORIGINAL
 
         # Match color
-        if self.color is not None and self.color != self.line_color:
+        if self.color is not None and self.color != self.linecolor:
             mp += IRC.color(self.color)
 
         self.wrap_line = (lp, ls) if lp else None
         self.wrap_match = (mp, ms) if mp else None
 
     def update(self):
+        if self.color == self.NONECOLORTUPLE:
+            self.color = None
+        if self.linecolor == self.NONECOLORTUPLE:
+            self.linecolor = None
         self.update_wrapper()
 
         # Build a regular expression, or maybe we already have one.
@@ -260,7 +356,7 @@ class Alert(object):
 
         # Build the substitution string for match wrapping
         if self.wrap_match:
-            index = 1 if self.regex.groups else 0
+            index = 0  # if self.regex.groups else 0
             self.replacement = lambda x, _w=self.wrap_match, _i=index: _w[0] + x.group(_i) + _w[1]
         else:
             self.replacement = None
@@ -271,22 +367,22 @@ class Alert(object):
         if not self.regex.search(words[1]):
             return False
 
-        if self.abs_sound is not None and not self.mute:
-            playsound(self.abs_sound)
-
         if self.strip:
             words[1] = hexchat.strip(words[1], -1, self.strip)
         if self.replacement is not None:
             words[1] = self.regex.sub(self.replacement, words[1])
+            print(self.replacement)
         if self.wrap_line is not None:
             words[1] = self.wrap_line[0] + words[1] + self.wrap_line[1]
             words[0] = self.wrap_line[0] + words[0] + self.wrap_line[1]
 
-        # temporary_blacklist.append((channel, event, words))
         hexchat.unhook(event_hooks[event])
         hexchat.emit_print(event, *words)
         event_hooks[event] = hexchat.hook_print(event, message_hook, event)
-        # print(event, repr(words))
+
+        if self.abs_sound is not None and not self.mute:
+            playsound(self.abs_sound)
+
         return True
 
     @property
@@ -323,10 +419,10 @@ class Alert(object):
         rv = {'n': self.name}
 
         # Format key:
-        # formats,color,line_color
+        # formats,color,linecolor
         # formats is "bBiIuUrRw" based on what's set.
         f = []
-        for attr in self.FORMAT_ATTRIBUTES:  # Uses bBiIuUrR
+        for attr in itertools.chain(self.FORMAT_ATTRIBUTES, self.BOOLEAN_ATTRIBUTES):  # Uses bBiIuUrR and wem
             value = getattr(self, attr)
             if not value:
                 continue
@@ -334,26 +430,19 @@ class Alert(object):
                 f.append(attr[0].upper())
             else:
                 f.append(attr[0].lower())
-        if self.word:
-            f.append("w")
-        if self.enabled:
-            f.append("e")
-        if self.mute:
-            f.append("m")
 
-        f.append(",")
-        if self.color is not None:
-            f.append(str(self.color))
-        f.append(",")
-        if self.line_color is not None:
-            f.append(str(self.line_color))
+        for attr in self.COLOR_ATTRIBUTES:
+            f.append(",")
+            value = getattr(self, attr)
+            if value is not None:
+                f.append(str(value))
         rv['f'] = "".join(f)
 
         if self.pattern is not None:
             if self.pattern != self.name:
                 rv['p'] = self.pattern
         else:
-            rv['r'] = self.regex
+            rv['r'] = self.regex.pattern
 
         if self.sound:
             rv['s'] = self.sound
@@ -367,31 +456,37 @@ class Alert(object):
     def import_dict(cls, d):
         rv = Alert(d['n'])
         if 'f' in d:
-            fmt, *parts = d['f'].split(",")
-            if len(parts) > 0 and len(parts[0]):
-                rv.color = int(parts[0])
-            if len(parts) > 1 and len(parts[1]):
-                rv.line_color = int(parts[1])
+            fmt, *colorparts = d['f'].split(",")
+
+            for attr, value in itertools.zip_longest(cls.COLOR_ATTRIBUTES, colorparts, fillvalue=""):
+                if not value:
+                    setattr(rv, attr, None)
+                    continue
+                setattr(rv, attr, Color.fromstring(value))
+
             for attr in cls.FORMAT_ATTRIBUTES:  # Uses bBiIuUrR
                 if attr[0].lower() in fmt:
                     setattr(rv, attr, True)
                 elif attr[0].upper() in fmt:
                     setattr(rv, attr, cls.LINE)
-            rv.word = 'w' in fmt
-            rv.enabled = 'e' in fmt
-            rv.mute = 'm' in fmt
+
+            for attr in cls.BOOLEAN_ATTRIBUTES:
+                setattr(rv, attr, attr[0].lower() in fmt)
+
         if 's' in d:
             rv.sound = d['s']
         if 'p' in d:
             rv.pattern = d['p']
         elif 'r' in d:
-            rv.regex = d['r']
+            rv.pattern = None
+            rv.regex = re.compile(d['r'], re.IGNORECASE)
         rv.update()
         return rv
 
     @classmethod
     def import_json(cls, s):
         return cls.import_dict(json.loads(s))
+
 
 def message_hook(words, word_eol, event):
     channel = hexchat.get_info('channel')
@@ -443,28 +538,49 @@ def get_num_args(fn):
         return min_count, max_count
 
 
-def command(name, collect=False, help="", requires_alert=False):
+def command(name, collect=False, help="", requires_alert=False, raw=False):
+    """
+    Defines a command and its callign convention.
+
+    :param name: Name of the command.
+    :param collect: If True, the final argument uses word_eol instead of word
+    :param help: Help text shown if command throws InvalidCommandException.
+    :param requires_alert: If True, the first argument of the command is an alert rather than the name of an alert.
+    :param raw: If True, parameter parsing beyond what requires_alert requires is not performed, words and word_eol are
+        passed mostly as-is.
+    :return:
+    """
     def decorator(fn, *a, **kw):
-        min_args, max_args = get_num_args(fn)
+        if not raw:
+            min_args, max_args = get_num_args(fn)
 
         @functools.wraps(fn)
         def wrapper(words, word_eol):
             try:
-                if len(words) < min_args:
-                    raise InvalidCommandException("Incorrect number of arguments")
-                if max_args is not None:
-                    if collect and len(words) >= max_args:
-                        words[max_args - 1] = word_eol[max_args - 1]
-                        words = words[0:max_args]
-                    elif max_args < len(words):
+                if not raw:
+                    if len(words) < min_args:
                         raise InvalidCommandException("Incorrect number of arguments")
+                    if max_args is not None:
+                        if collect and len(words) >= max_args:
+                            words[max_args - 1] = word_eol[max_args - 1]
+                            words = words[0:max_args]
+                        elif max_args < len(words):
+                            raise InvalidCommandException("Incorrect number of arguments")
 
                 if requires_alert:
+                    if not len(words):
+                        raise InvalidCommandException("Incorrect number of arguments")
                     alert = alerts.get(words[0].lower())
                     if alert is None:
                         print("Alert '{}' not found.".format(words[0]))
                         return False
+
+                    if raw:
+                        return fn(alert, words[1:], word_eol[1:])
                     words[0] = alert
+
+                if raw:
+                    return fn(words, word_eol)
 
                 return fn(*words)
 
@@ -475,12 +591,34 @@ def command(name, collect=False, help="", requires_alert=False):
                 return False
 
         COMMANDS[name] = wrapper
-        return wrapper
+        return fn
     return decorator
 alert_command = functools.partial(command, requires_alert=True)
 
 
-@command("add", help="<name>: Add an alert with <name>")
+def multi_command(fn):
+    def wrapper(*names, **kwargs):
+        keys = list(name.strip().lower() for name in names)
+        is_all = 'all' in keys
+
+        if is_all:
+            return fn(alerts, is_all=True, original=names, **kwargs)
+
+        items = OrderedDict()
+        for key, name in zip(keys, names):
+            if key in items:
+                continue
+            alert = alerts.get(key)
+            if alert is None:
+                print("Alert '{}' not found.".format(name))
+                continue
+            items[key] = alert
+
+        return fn(items, is_all=False, original=names, **kwargs)
+    return wrapper
+
+
+@command("add", help="<alert>: Add an alert named <alert>")
 def cmd_add(name):
     key = name.lower()
     if key in alerts:
@@ -492,285 +630,425 @@ def cmd_add(name):
     return True
 
 
-@command("delete", help="<name>|ALL: Delete alert with <name>, or delete all alerts.")
-def cmd_delete(*names):
-    if not names:
+@command("delete", help="<alerts...>|ALL: Delete selected alerts (separated by spaces), or delete all alerts.")
+@multi_command
+def cmd_delete(items, is_all=None, **unused):
+    if is_all:
+        print("Deleted {} alert(s)".format(len(alerts)))
+        alerts.clear()
+        return
+    if not items:
         raise InvalidCommandException()
-    for name in names:
-        key = name.lower()
-        if key == 'all':
-            print("Deleted {} alert(s)".format(len(alerts)))
-            alerts.clear()
-            continue
-
-        if key not in alerts:
-            print("Alert '{}' not found.".format(name))
-            continue
-
+    for key, alert in items.items():
+        print("Deleted alert '{}'.".format(alert.name))
         del alerts[key]
-        print("Deleted alert '{}'.".format(name))
-        continue
 
 
-@alert_command("set", requires_alert=True, collect=True, help="<name> (sound|pattern|word|regex|bold|italic|underline|reverse|color|linecolor) [<value>]: Change alert settings.")
-def cmd_set(alert, setting, value=None):
-    boolean_map = {
-        '0': False, 'off': False, 'f': False, 'false': False,
-        '1': True, 'on': True, 't': True, 'true': True
-    }
+def parse_bool(
+    s,
+    _map={'0': False, 'off': False, 'f': False, 'false': False, '1': True, 'on': True, 't': True, 'true': True}
+):
+    result = _map.get(s.strip().lower())
+    if result is None:
+        raise ValueError("Invalid format for boolean")
+    return result
 
-    setting = setting.lower()
-    if setting in alert.FORMAT_ATTRIBUTES:
-        if value is not None:
-            value = value.strip().lower()
-            if value == 'line':
-                value = alert.LINE
-            elif value in boolean_map:
-                value = boolean_map[value]
-            else:
-                raise InvalidCommandException("<value> must be one of (ON|OFF|LINE)")
-            setattr(alert, setting, value)
-            alert.update()
 
-        value = getattr(alert, setting)
-        if value is alert.LINE:
-            value = 'line'
+def parse_format(s):
+    if s.strip().lower() == 'line':
+        return Alert.LINE
+    return parse_bool(s)
+
+
+def cmd_setshow_format(alert, setting, value=None):
+    isset = value is not None
+    if isset:
+        try:
+            value = parse_format(value)
+        except ValueError:
+            raise InvalidCommandException("Value for {setting} must must be one of (ON|OFF|LINE)".format(setting))
+        setattr(alert, setting, value)
+        alert.update()
+
+    value = getattr(alert, setting)
+    if value is alert.LINE:
+        value = 'line'
+    else:
+        value = 'on' if value else 'off'
+    alert.print("{setting} {action} '{value}'".format(setting=setting, value=value, action='set to' if isset else 'is'))
+    return True
+
+
+def cmd_setshow_boolean(alert, setting, value=None):
+    isset = value is not None
+    if isset:
+        try:
+            value = parse_bool(value)
+        except ValueError:
+            raise InvalidCommandException("Value for {setting} must must be one of (ON|OFF)".format(setting))
+        setattr(alert, setting, value)
+        alert.update()
+
+    value = 'on' if getattr(alert, setting) else 'off'
+    alert.print("{setting} {action} '{value}'".format(setting=setting, value=value, action='set to' if isset else 'is'))
+    return True
+
+
+def cmd_setshow_color(alert, setting, value=None):
+    isset = value is not None
+    if isset:
+        if value.strip().lower() in ('off', 'f', 'false', 'none'):
+            value = None
         else:
-            value = 'on' if value else 'off'
-        print("Alert {}: {} is '{}'".format(alert.name, setting, value))
-        return True
-
-    if setting == 'word':
-        if value is not None:
-            value = boolean_map.get(value.strip().lower())
-            if value is None:
-                raise InvalidCommandException("<value> must be one of (ON|OFF)")
-            alert.word = value
-            alert.update()
-
-        print("Alert {}: word boundary only is '{}'".format(alert.name, alert.word))
-        if alert.pattern is None:
-            print("(Note: This setting is ignored when using a regex)")
-        return True
-
-    if setting == 'color' or setting == 'linecolor':
-        attr = setting
-        if attr == 'linecolor':
-            attr = 'line_color'
-
-        if value is not None:
-            if boolean_map.get(value.strip().lower()) is False:
-                value = None
-            else:
-                try:
-                    value = int(value)
-                except ValueError:
-                    print("<value> must be an integer between 0 and 31 or OFF.")
-                    return False
-                if not (0 <= value <= 31):
-                    print("<value> must be an integer between 0 and 31 or OFF.")
-                    return False
-            setattr(alert, attr, value)
-            alert.update()
-
-        value = getattr(alert, attr)
-        if value is None:
-            value = 'not set'
-        print("Alert {}: {} is {}".format(alert.name, setting, value))
-        return True
-
-    if setting == 'pattern':
-        if value is not None:
-            alert.pattern = value
-            alert.update()
-
-        if alert.pattern is None:
-            print("Alert {} does not use a pattern.")
-            return True
-
-        alert.print("Pattern set to '{}' (word matching is {})".format(alert.pattern, 'on' if alert.word else 'OFF'))
-        return True
-
-    if setting == 'regex':
-        if value is not None:
             try:
-                regex = re.compile(value, re.IGNORECASE)
-            except re.error as ex:
-                print("Regular expression error: {}".format(str(ex)))
+                value = Color.fromstring(value, ',')
+            except ValueError:
+                print("<value> must be one or two comma-separated integers between {} and {} or OFF.".format(IRC.MINCOLOR, IRC.MAXCOLOR))
                 return False
-            alert.regex = regex
-            alert.pattern = None
-            alert.update()
+            for c in value:
+                if c is None:
+                    continue
+                if not (IRC.MINCOLOR <= c <= IRC.MAXCOLOR):
+                    print("<value> must be one or two comma-separated integers between {} and {} or OFF.".format(IRC.MINCOLOR, IRC.MAXCOLOR))
+                    return False
+        setattr(alert, setting, value)
 
-        if alert.pattern is None:
-            alert.print("Regex set to '{}'".format(alert.regex.pattern))
+    value = getattr(alert, setting)
+    if value is None:
+        value = 'not set'
+    else:
+        value = value.str(",")
+    alert.print("{setting} {action} '{value}'".format(setting=setting, value=value, action='set to' if isset else 'is'))
+    return True
+
+
+@alert_command("pattern", collect=True)
+def cmd_setshow_pattern(alert, value=None):
+    isset = value is not None
+    if isset:
+        alert.pattern = value
+        alert.update()
+    if alert.pattern is None:
+        print("Alert {} does not use a pattern.")
+    else:
+        alert.print(
+            "Pattern {action} '{value}' (word matching is {word})"
+            .format(value=value, action='set to' if isset else 'is', word='on' if alert.word else 'OFF')
+        )
+    return True
+
+
+@alert_command("regex", collect=True)
+def cmd_setshow_regex(alert, value=None):
+    isset = value is not None
+    if isset:
+        try:
+            regex = re.compile(value, re.IGNORECASE)
+        except re.error as ex:
+            print("Regular expression error: {}".format(str(ex)))
+            return False
+        alert.pattern = None
+        alert.regex = regex
+        print(alert.regex.pattern)
+        alert.update()
+        print(alert.regex.pattern)
+
+    if alert.pattern is None:
+        alert.print(
+            "Regex {action} '{value}'"
+            .format(value=regex.pattern, action='set to' if isset else 'is')
+        )
+    else:
+        alert.print("Regex is '{}' (derived from pattern: '{}')".format(alert.regex.pattern, alert.pattern))
+    return True
+
+
+@alert_command("sound", collect=True)
+def cmd_setshow_sound(alert, value=None):
+    isset = value is not None
+    if isset:
+        if value.strip().lower() in ('off', 'f', 'false', 'none'):
+            alert.sound = None
         else:
-            alert.print("Regex set to '{}' (derived from pattern: '{}')".format(alert.regex.pattern, alert.pattern))
-        return True
+            alert.sound = value
+            if not alert.abs_sound and not value.lower().endswith(".wav"):
+                alert.sound = value + ".wav"
+                if not alert.abs_sound:
+                    alert.sound = value
 
-    if setting == 'sound':
-        if value is not None:
-            if value.lower() in ('off', 'none'):
-                alert.sound = None
-            else:
-                alert.sound = value
-        if alert.sound:
-            if alert.abs_sound:
-                msg = "Sound set to {0.sound} (found at {0.abs_sound})"
-            else:
-                msg = "Sound set to {0.sound} " + IRC.BOLD + "(file not found in search path)" + IRC.ORIGINAL
-            alert.print(msg.format(alert))
+    if alert.sound:
+        if alert.abs_sound:
+            msg = "Sound {action} {0.sound} (found at {0.abs_sound})"
         else:
-            alert.print("Sound is unset.")
-        return True
+            msg = "Sound {action} {0.sound} " + IRC.BOLD + "(file not found in search path)" + IRC.ORIGINAL
+        alert.print(msg.format(alert, action='set to' if isset else 'is'))
+    elif isset:
+        alert.print("Sound removed.")
+    else:
+        alert.print("No sound set.")
+    return True
 
-    raise InvalidCommandException('Unknown setting.')
+
+@alert_command(
+    "set", raw=True,
+    help="<alert> (sound|pattern|regex|" + "|".join(itertools.chain(Alert.FORMAT_ATTRIBUTES, Alert.BOOLEAN_ATTRIBUTES, Alert.BOOLEAN_ATTRIBUTES)) + " [<value>]: Change alert settings."
+)
+def cmd_set(alert, words, word_eol):
+    for ix in range(0, len(words), 2):
+        setting = words[ix]
+        if ix+1 < len(words):
+            value = words[ix+1]
+            value_eol = word_eol[ix+1]
+        else:
+            value, value_eol = None, None
+        if setting in alert.FORMAT_ATTRIBUTES:
+            cmd_setshow_format(alert, setting, value)
+            continue
+        if setting in alert.BOOLEAN_ATTRIBUTES:
+            cmd_setshow_boolean(alert, setting, value)
+            continue
+        if setting in alert.COLOR_ATTRIBUTES:
+            cmd_setshow_color(alert, setting, value)
+            continue
+        if setting == 'pattern':
+            return cmd_setshow_pattern(alert, value_eol)
+        if setting == 'regex':
+            return cmd_setshow_regex(alert, value_eol)
+        if setting == 'sound':
+            return cmd_setshow_sound(alert, value_eol)
+        raise InvalidCommandException("Unknown setting '{}'.".format(setting))
 
 
-def cmd_enable(*names, enable=True):
-    if not names:
+@alert_command("show")
+def cmd_show(alert, *show):
+    show = list(setting.strip().lower() for setting in show)
+    if 'all' in show:
+        show = list(
+            itertools.chain(
+                ["sound", "pattern", "regex"],
+                Alert.FORMAT_ATTRIBUTES, Alert.BOOLEAN_ATTRIBUTES, Alert.BOOLEAN_ATTRIBUTES
+            )
+        )
+
+    for setting in show:
+        if setting in alert.FORMAT_ATTRIBUTES:
+            cmd_setshow_format(alert, setting)
+        elif setting in alert.BOOLEAN_ATTRIBUTES:
+            cmd_setshow_boolean(alert, setting)
+        elif setting in alert.COLOR_ATTRIBUTES:
+            cmd_setshow_color(alert, setting)
+        elif setting == 'pattern':
+            cmd_setshow_pattern(alert)
+        elif setting == 'regex':
+            cmd_setshow_regex(alert)
+        elif setting == 'sound':
+            cmd_setshow_sound(alert)
+        else:
+            print("Unknown setting '{}'.".format(setting))
+
+
+@multi_command
+def cmd_multi_bool(items, is_all=None, attr='enabled', changeto=True, state='enabled', **unused):
+    ustate = state.capitalize()
+
+    if not items:
+        if is_all:
+            print("No alerts are currently defined.")
+            return
         raise InvalidCommandException()
 
-    for name in names:
-        key = name.lower()
-        if key == 'all':
-            changed = 0
-            for alert in alerts.values():
-                if alert.enabled != enable:
-                    changed += 1
-                alert.enabled = enable
-            print("{} {} alert(s)".format("Enabled" if enable else "Disabled", changed))
-            continue
+    changed = 0
+    for alert in items.values():
+        value = getattr(alert, attr)
+        if value == changeto:
+            if not is_all:
+                alert.print("Already {}.".format(state))
+        else:
+            changed += 1
+            if not is_all:
+                alert.print("{}.".format(ustate))
+        setattr(alert, attr, changeto)
 
-        alert = alerts.get(key)
-        if alert is None:
-            print("Alert '{}' not found.".format(name))
-            continue
+    if is_all:
+        print("{} {} alert(s)".format(ustate, changed))
 
-        if alert.enabled == enable:
-            alert.print("Already ", "enabled" if enable else "disabled")
-            continue
-        alert.enabled = enable
-        alert.print("enabled" if enable else "disabled")
-        continue
-command('enable', False, "<name>|ALL: Enable selected alert(s)")(cmd_enable)
-command('disable', False, "<name>|ALL: Disable selected alert(s)")(functools.partial(cmd_enable, enable=False))
+cmd_enable = functools.partial(cmd_multi_bool, attr='enabled', state='enabled', changeto=True)
+cmd_disable = functools.partial(cmd_multi_bool, attr='enabled', state='disabled', changeto=False)
+cmd_mute = functools.partial(cmd_multi_bool, attr='mute', state='muted', changeto=True)
+cmd_unmute = functools.partial(cmd_multi_bool, attr='mute', state='unmuted', changeto=False)
+
+command('enable', help="<name>|ALL: Enable selected alert(s)")(cmd_enable)
+command('disable', help="<name>|ALL: Disable selected alert(s)")(cmd_disable)
 COMMANDS['on'] = COMMANDS['enable']
 COMMANDS['off'] = COMMANDS['disable']
 
-
-def cmd_mute(*names, mute=True):
-    if not names:
-        raise InvalidCommandException()
-
-    for name in names:
-        key = name.lower()
-        if key == 'all':
-            changed = 0
-            for alert in alerts.values():
-                if alert.mute != mute:
-                    changed += 1
-                alert.mute = mute
-            print("{} {} alert(s)".format("Muted" if mute else "Unmuted", changed))
-            continue
-
-        alert = alerts.get(key)
-        if alert is None:
-            print("Alert '{}' not found.".format(name))
-            continue
-
-        if alert.mute == mute:
-            alert.print("Already", "muted" if mute else "unmuted")
-            continue
-        alert.mute = mute
-        alert.print("muted" if mute else "unmuted")
-        continue
-command('mute', False, "<name>|ALL: Mute selected alert(s)")(cmd_mute)
-command('unmute', False, "<name>|ALL: Unmute selected alert(s)")(functools.partial(cmd_mute, mute=False))
+command('mute', help="<name>|ALL: Mute selected alert(s)")(cmd_mute)
+command('unmute', help="<name>|ALL: Unmute selected alert(s)")(cmd_unmute)
 
 
-@command("help")
-def cmd_help(*unused):
-    print("{name} version {version}".format(name=__module_name__, version=__module_version__))
-    print("{description}".format(description=__module_description__))
+@command("preview")
+@multi_command
+def cmd_preview(items, is_all=None, original=None, **unused):
+    sound = (not is_all) and len(original) == 1
+    if is_all and not items:
+        print("No alerts are currently defined.")
+        return False
+
+    for alert in items.values():
+        inner = "(Matching portion)"
+        if alert.wrap_match:
+            inner = alert.wrap_match[0] + inner + alert.wrap_match[1]
+        outer = "Preview of alert formatting {}".format(inner)
+        if alert.wrap_line:
+            outer = alert.wrap_line[0] + outer + alert.wrap_line[1]
+        alert.print(outer)
+
+        if sound and alert.abs_sound:
+            playsound(alert.abs_sound)
+
+
+@command("help", help="[<command-or-setting]>: Shows help.")
+def cmd_help(search=None):
+    if not search:
+        print("{name} version {version} - {description}"
+            .format(name=__module_name__, version=__module_version__, description=__module_description__)
+        )
+    else:
+        search = search.lower().strip()
+        search = ("/alerts " + search, ":" + search)
+        found_start = False
+        found_end = False
+
+    section = None
+    buffer = []
+
     for line in __doc__.strip().splitlines():
-        if line.startswith("/alerts"):
+        is_blank = line == "" or line[0] in string.whitespace
+
+        if line.startswith('**'):
+            line = IRC.UNDERLINE + IRC.BOLD + line.strip('*' + string.whitespace).upper() + IRC.ORIGINAL
+            section = line
+            buffer.clear()
+            if search:
+                continue
+
+        if search:
+            if found_start:
+                if is_blank:
+                    found_end = True
+                elif found_end:
+                    found_start = False
+                    found_end = False
+            else:
+                if is_blank and buffer:
+                    buffer.clear()
+                if any(line.startswith(phrase) for phrase in search):
+                    found_start = True
+                    found_end = False
+                    if section is not None:
+                        print(section)
+                        section = None
+                    if buffer:
+                        for text in buffer:
+                            print(text)
+                        buffer.clear()
+
+        if section and not search:
+            section = None
+        elif line.startswith("/alerts") or line.startswith(':'):
+            if line.startswith(':'):
+                line = line[1:]
             line = IRC.BOLD + line + IRC.BOLD
-        print(line)
+
+        if search and not found_start:
+            if not is_blank:
+                buffer.append(line)
+        else:
+            print(line)
 
 
 @command("dump", help="<name>|ALL: Dump selected alert(s) to output.")
-def cmd_dump(*names):
-    if not names:
+@multi_command
+def cmd_dump(items, is_all=None, **kwargs):
+    if not items:
+        if is_all:
+            print("No alerts are currently defined.")
+            return False
         raise InvalidCommandException()
-    for name in names:
-        key = name.lower()
-        if key == 'all':
-            t = alerts.values()
-        elif key not in alerts:
-            print("Alert '{}' not found.".format(name))
-            continue
+
+    for alert in items.values():
+        print("/alerts add {0.name}".format(alert))
+        if alert.pattern is not None:
+            if alert.pattern != alert.name:
+                print("/alerts pattern {0.name} {0.pattern}".format(alert))
         else:
-            t = [alerts[key]]
+            print("/alerts regex {0.name} {0.regex.pattern}".format(alert))
 
-        for alert in t:
-            print("/alerts add {0.name}".format(alert))
-            if not alert.enabled:
-                print("/alerts disable {0.name}".format(alert))
+        settings = []
+        for attr in alert.FORMAT_ATTRIBUTES:
+            value = getattr(alert, attr)
+            if not value:
+                continue
+            value = "line" if value is alert.LINE else "on"
+            settings.extend([attr, value])
+        for attr in alert.COLOR_ATTRIBUTES:
+            value = getattr(alert, attr)
+            if not value:
+                continue
+            settings.extend([attr, value.str(",")])
+        if not alert.enabled:
+            settings.append("enabled off")
+        if alert.mute:
+            settings.append("mute on")
+        if alert.pattern is not None and not alert.word:
+            settings.append("word off")
+        if alert.sound:
+            settings.extend(["sound", alert.sound])
 
-            if alert.pattern is not None:
-                if alert.pattern != alert.name:
-                    print("/alerts set {0.name} pattern {0.pattern}".format(alert))
-                if not alert.word:
-                    print("/alerts set {0.name} word off".format(alert))
-            else:
-                print("/alerts set {0.name} regex {0.regex.pattern}".format(alert))
-
-            if alert.sound:
-                print("/alerts set {0.name} sound {0.sound}".format(alert))
-
-
-            for attr in ("bold", "italic", "underline", "reverse"):
-                value = getattr(alert, attr)
-                if not value:
-                    continue
-                value = "line" if value is alert.LINE else "on"
-                print("/alerts set {0.name} {attr} {value}".format(alert, attr=attr, value=value))
-
-            if alert.color is not None:
-                print("/alerts set {0.name} color {0.color}".format(alert))
-            if alert.line_color is not None:
-                print("/alerts set {0.name} linecolor {0.line_color}".format(alert))
-            if alert.mute:
-                print("/alerts mute {0.name}".format(alert))
+        if settings:
+            print("/alerts set {0.name} {1}".format(alert, " ".join(settings)))
 
 
-@command("export", help="<name>|ALL: Export selected alert(s) as JSON.")
-def cmd_export(*names):
-    if not names:
+@command("export", help="<alerts...>|ALL: Export selected alert(s) as JSON.")
+@multi_command
+def cmd_export(items, is_all=None, **unused):
+    if not items:
+        if is_all:
+            print("No alerts are currently defined.")
+            return False
         raise InvalidCommandException()
-    result = []
-    for name in names:
-        key = name.lower()
-        if key == 'all':
-            t = alerts.values()
-        elif key not in alerts:
-            print("Alert '{}' not found.".format(name))
-            continue
-        else:
-            t = [alerts[key]]
 
-        for alert in t:
-            result.append(alert.export_dict())
-
+    result = [alert.export_dict() for alert in items.values()]
     if len(result) == 1:
-        print(json.dumps(result[0], separators=(',', ':')))
-        return
+        result = result[0]
     print(json.dumps(result, separators=(',', ':')))
+
+
+@command("share", help="<alerts...>: Share selected alert(s) on current IRC channel.")
+def cmd_share(*names):
+    if not names:
+        raise InvalidCommandException()
+    result = OrderedDict()
+    for name in names:
+        key = name.lower()
+        if key == 'all':
+            print("/alerts share all is not supported, as it may inadvertently flood channels.")
+            return False
+        elif key not in alerts:
+            print("Alert '{}' not found.".format(name))
+            return False
+
+        alert = alerts[key]
+        result[alert.name] = alert.export_json()
+
+    for name, output in result.items():
+        hexchat.command(
+            "SAY [HexChat alerts.py plugin]: Add alert '{name}' with /alerts import {output}"
+            .format(name=name, output=output)
+        )
 
 @command("import", help="<json>: Import JSON data.", collect=True)
 def cmd_import(data):
-    print(repr(data))
     try:
         result = json.loads(data)
     except Exception as ex:
@@ -842,7 +1120,6 @@ def command_hook(words, word_eol, userdata):
     fn = COMMANDS[cmd]
     fn(words, word_eol)
     return
-
 
 
 def save():

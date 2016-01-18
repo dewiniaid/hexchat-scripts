@@ -4,7 +4,6 @@ Improved alerts for Hexchat
 ## Requirements
 * Hexchat
 * Python 3.3 or later (tested with Python 3.4).  May also work with Python 2.x, this is untested.
-* Xine and pyxine for sound on non-Windows platforms.  (Untested)
 
 ## Installation Instructions
 1. Save 'alerts.py' to your Hexchat addons directory.  On Windows, this is located at `%appdata%\HexChat\addons`.  On Linux and OSX, this is probably `./config/hexchat/addons`
@@ -20,10 +19,17 @@ Improved alerts for Hexchat
 ## Planned features/wishlist:
 * Option to focus the window an alert occurs in.
 * Option to filter alerts by channel/etc.
-* Customizable background colors.
 * Option to copy messages or some subset thereof to the current window.
 
 ## Changelog
+### 0.4
+* Lots of bugfixes and code tidying.
+* Probably some new bugs.
+* Support for background colors
+* Support for sharing alerts in the active IRC channel/conversation with /alerts share
+* Can now set multiple options simultaneously with one command.
+* Revamped help system -- can /alerts help <command-or-setting> in addition to /alerts help by itself
+* Use Hexchat's /SPLAY command to play sounds instead of our own solution.
 ### 0.3
 Fixed issue with colors not being restored correctly.
 ### 0.2
