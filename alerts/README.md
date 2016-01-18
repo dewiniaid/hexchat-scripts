@@ -30,7 +30,9 @@ Improved alerts for Hexchat
 * Can now set multiple options simultaneously with one command.
 * Revamped help system -- can /alerts help <command-or-setting> in addition to /alerts help by itself
 * Use Hexchat's /SPLAY command to play sounds instead of our own solution.
+
 ### 0.3
 Fixed issue with colors not being restored correctly.
+
 ### 0.2
 Removed debug code, restructured some to attempt to stop Hexchat crashes, implemented /alerts copy
