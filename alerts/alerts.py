@@ -73,7 +73,7 @@ Usage:
     Saves alerts manually.  (This should happen when exiting Hexchat)
 """
 __module_name__ = "alerts"
-__module_version__ = "0.1"
+__module_version__ = "0.2"
 __module_description__ = "Custom highlighting and alert messages -- by Dewin"
 
 
@@ -105,7 +105,6 @@ if os.name == "nt":
     # Winsound is installed by default on Windows platforms
     import winsound
     def playsound(filename):
-        print("playing sound!")
         winsound.PlaySound(filename, winsound.SND_FILENAME ^ winsound.SND_ASYNC)
 
     sound_search_path = [
@@ -136,7 +135,7 @@ sound_search_path = list(os.path.expandvars(os.path.expanduser(path)) for path i
 
 # Since we reformat text before sending it, we maintain a blacklist of messages we emit.
 # An item is removed from this blacklist is cleared when a matching message is received.
-temporary_blacklist = []
+# temporary_blacklist = []
 
 
 class IRC(object):
@@ -283,8 +282,11 @@ class Alert(object):
             words[1] = self.wrap_line[0] + words[1] + self.wrap_line[1]
             words[0] = self.wrap_line[0] + words[0] + self.wrap_line[1]
 
-        temporary_blacklist.append((channel, event, words))
+        # temporary_blacklist.append((channel, event, words))
+        hexchat.unhook(event_hooks[event])
         hexchat.emit_print(event, *words)
+        event_hooks[event] = hexchat.hook_print(event, message_hook, event)
+        # print(event, repr(words))
         return True
 
     @property
@@ -394,11 +396,11 @@ class Alert(object):
 def message_hook(words, word_eol, event):
     channel = hexchat.get_info('channel')
 
-    try:
-        temporary_blacklist.remove((channel, event, words))
-        return None
-    except ValueError:
-        pass
+    # try:
+    #     temporary_blacklist.remove((channel, event, words))
+    #     return None
+    # except ValueError:
+    #     pass
 
     for alert in alerts.values():
         if alert.handle(channel, event, words):
@@ -811,6 +813,20 @@ def cmd_save():
     print("{} alert(s) saved".format(len(alerts)))
 
 
+@alert_command("copy", help="<name> <newname>: Duplicates all settings of an alert to a new alert.")
+def cmd_copy(alert, new):
+    key = new.lower()
+    if key in alerts:
+        print("Alert '{}' already exists".format(key))
+
+    newalert = Alert.import_dict(alert.export_dict())
+    newalert.name = new
+    newalert.pattern = new
+    newalert.update()
+    alerts[key] = newalert
+    newalert.print("Copied from {0.name}".format(alert))
+
+
 def command_hook(words, word_eol, userdata):
     if len(words) < 2:
         print("Type '/alerts help' for full usage instructions.")
@@ -881,9 +897,10 @@ load()
 print("{} alert(s) loaded".format(len(alerts)))
 hexchat.hook_unload(unload_hook)
 hexchat.hook_command("alerts", command_hook, help="Configures custom alerts")
+
+event_hooks = {}
 for event in (
     "Channel Msg Hilight", "Channel Message", "Channel Action",
     "Private Message", "Private Message to Dialog", "Private Action", "Private Action to Dialog"
 ):
-    hexchat.hook_print(event, message_hook, event)
-
+    event_hooks[event] = hexchat.hook_print(event, message_hook, event)
