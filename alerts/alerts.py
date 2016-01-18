@@ -63,9 +63,6 @@
 /alerts preview <alerts...>|ALL
     Previews one or more alerts.  If a single alert is specified, sound will be played as well.
 
-/alerts showcolors
-    Show all possible colors.
-
 ** Import/Export and Sharing **
 /alerts dump <alerts...>|ALL
     Outputs the commands required to re-create the specified alert(s).
@@ -125,7 +122,7 @@ The following settings can manipulated using /alerts set, /alerts show and /aler
     on the line when using /alerts set.
 """
 __module_name__ = "alerts"
-__module_version__ = "0.4.20160108"
+__module_version__ = "0.4.20160108.001"
 __module_description__ = "Custom highlighting and alert messages -- by Dewin"
 
 
@@ -811,12 +808,16 @@ def cmd_set(alert, words, word_eol):
             cmd_setshow_color(alert, setting, value)
             continue
         if setting == 'pattern':
-            return cmd_setshow_pattern(alert, value_eol)
+            cmd_setshow_pattern(alert, value_eol)
+            break
         if setting == 'regex':
-            return cmd_setshow_regex(alert, value_eol)
+            cmd_setshow_regex(alert, value_eol)
+            break
         if setting == 'sound':
-            return cmd_setshow_sound(alert, value_eol)
+            cmd_setshow_sound(alert, value_eol)
+            break
         raise InvalidCommandException("Unknown setting '{}'.".format(setting))
+    alert.update()
 
 
 @alert_command("show")
