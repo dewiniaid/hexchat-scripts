@@ -122,7 +122,7 @@ The following settings can manipulated using /alerts set, /alerts show and /aler
     on the line when using /alerts set.
 """
 __module_name__ = "alerts"
-__module_version__ = "0.4.20160108.001"
+__module_version__ = "0.4.20160108.002"
 __module_description__ = "Custom highlighting and alert messages -- by Dewin"
 
 
@@ -317,12 +317,8 @@ class Alert(object):
             if not mp and self.color is None:
                 ms = ''
             elif self.color is not None and self.color != self.linecolor:
-                if self.linecolor is None:
-                    # No way to know what the original color was, so reset to defaults and reset line_prefix
-                    ms = IRC.ORIGINAL + lp
-                else:
-                    # Don't care what the original color was, change to line color and toggle anything in prefix
-                    ms = mp + IRC.color(self.linecolor)
+                # Reset to defaults and reset line_prefix
+                ms = IRC.ORIGINAL + lp
             else:
                 # No colors are involved, just repeat prefix to undo anything it did
                 ms = mp
@@ -368,7 +364,6 @@ class Alert(object):
             words[1] = hexchat.strip(words[1], -1, self.strip)
         if self.replacement is not None:
             words[1] = self.regex.sub(self.replacement, words[1])
-            print(self.replacement)
         if self.wrap_line is not None:
             words[1] = self.wrap_line[0] + words[1] + self.wrap_line[1]
             words[0] = self.wrap_line[0] + words[0] + self.wrap_line[1]
