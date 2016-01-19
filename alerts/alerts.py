@@ -122,7 +122,7 @@ The following settings can manipulated using /alerts set, /alerts show and /aler
     on the line when using /alerts set.
 """
 __module_name__ = "alerts"
-__module_version__ = "0.4.20160108.002"
+__module_version__ = "0.4.20160108.004"
 __module_description__ = "Custom highlighting and alert messages -- by Dewin"
 
 
@@ -1115,7 +1115,7 @@ def command_hook(words, word_eol, userdata):
 
     fn = COMMANDS[cmd]
     fn(words, word_eol)
-    return
+    return hexchat.EAT_ALL
 
 
 def save():
