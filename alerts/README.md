@@ -3,17 +3,17 @@ Improved alerts for Hexchat
 
 ## Requirements
 * Hexchat
-* Hexchat's Python 3 plugin.  (Does not currently work Python 2.x).  Use /py about to see if the plugin is installed and the version of Python in use.
+* Hexchat's Python 3 plugin.  (Does not currently work Python 2.x).  Use `/py about` to see if the plugin is installed and the version of Python in use.  The easiest way to get the plugin on Windows is to rerun the Hexchat installer.
+* Python **3.4**.x.  The current Hexchat plugin will not work with other Python versions (like 3.5, which is newer)
 
 ## Installation Instructions
-1. Save 'alerts.py' to your Hexchat addons directory.  On Windows, this is located at `%appdata%\HexChat\addons`.  On Linux and OSX, this is probably `./config/hexchat/addons`
+1. Save `alerts.py` to your Hexchat addons directory.  On Windows, this is located at `%appdata%\HexChat\addons`.  On Linux and OSX, this is probably `./config/hexchat/addons`
 2. Ensure the correctPython plugin is enabled in Hexchat.  You can check with `/py about`.   
    - If nothing shows up, the easiest way to fix this is to rerun the Hexchat installer and select to install the Python 3 plugin.
 3. Type `/py load alerts.py` in Hexchat, or restart Hexchat and the script should automatically load.
 4. Type `/alerts help` to see documentation for creating alerts, or see the top of alerts.py
 
 ## Known Issues
-* There *may* be a Hexchat crashing bug, if you're still experiencing this in 0.3 discontinue use and let me know.
 * If Hexchat tries to play a sound from a highlight/PM at the same time this plugin does, Hexchat's sounds wins. Turn off the highlight sounds in Hexchat if this is the case.
 * Sound is untested on anything but Windows. Sounds must be .wav files.
 
