@@ -2,10 +2,12 @@
 Improved alerts for Hexchat
 
 ## Requirements
-* Hexchat
-* Hexchat's Python 3 plugin.  (Does not currently work Python 2.x).  Use `/py about` to see if the plugin is installed and the version of Python in use.  The easiest way to get the plugin on Windows is to rerun the Hexchat installer.
-* Python **3.4**.x.  The current Hexchat plugin will not work with other Python versions (like 3.5, which is newer)
-
+* [Hexchat](https://hexchat.github.io/) version 2.10 or later
+* Hexchat's Python 3 plugin.  (Does not currently work Python 2.x).  Use `/py about` to see if the plugin is installed and the version of Python it expects.  The easiest way to get the plugin on Windows is to rerun the Hexchat installer.
+* The correct version of [Python](https://www.python.org/downloads/) for the Python 3 plugin.  (You cannot use newer versions.)
+  - Hexchat 2.10.2 required Python **3.4.x**
+  - Hexchat 2.12 requires Python **3.5.x**
+  - 
 ## Installation Instructions
 1. Save `alerts.py` to your Hexchat addons directory.  On Windows, this is located at `%appdata%\HexChat\addons`.  On Linux and OSX, this is probably `./config/hexchat/addons`
 2. Ensure the correctPython plugin is enabled in Hexchat.  You can check with `/py about`.   
