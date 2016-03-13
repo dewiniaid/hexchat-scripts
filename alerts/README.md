@@ -33,7 +33,7 @@ Improved alerts for Hexchat
   text entered (to avoid accidentally finishing your sentence in the new window) unless you choose *FORCE*
 * Add `/alerts notify`, which notifies you in your current window if receiving an alert in a different one.
 * Fix several small bugs
-* Found lots of new and exciting ways to cras Hexchat and hopefully worked around all of them.
+* Found lots of new and exciting ways to crash Hexchat and hopefully worked around all of them.
 
 ### 0.4
 * Lots of bugfixes and code tidying.
