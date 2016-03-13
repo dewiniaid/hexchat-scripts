@@ -24,7 +24,8 @@
 /alerts pattern <alert> [<pattern>]
     Sets the pattern for alert, or shows the current pattern if a new pattern is not specified.
 
-    Patterns can contain any text.  Simple wildcards (*) are permitted.  Setting a pattern clears any regex (if one was set).
+    Patterns can contain any text.  Simple wildcards (*) are permitted.  Setting a pattern clears any regex (if one was
+    set).
 
     Patterns only match on word boundaries by default, but see the 'word' setting.
 
@@ -35,13 +36,16 @@
 
 ** Sounds **
 /alerts sound <alert> [<soundfile>|OFF]
-    Associates <soundfile> with the associated alert, or shows the current sound if a new sound is not specified.  "OFF" disables sound for this alert.
+    Associates <soundfile> with the associated alert, or shows the current sound if a new sound is not specified.  "OFF"
+    disables sound for this alert.
 
     <soundfile> will be searched for in the following locations (in order):
         Windows: %APPDATA%\HexChat\Sounds, %ProgramFiles%\HexChat\Sounds, %ProgramFiles(x86)%\HexChat\Sounds
-        POSIX-like: ~/.config/hexchat/sounds, /sbin/HexChat/share/sounds, /usr/sbin/HexChat/share/sounds, /usr/local/bin/HexChat/share/sounds
+        POSIX-like: ~/.config/hexchat/sounds, /sbin/HexChat/share/sounds, /usr/sbin/HexChat/share/sounds,
+        /usr/local/bin/HexChat/share/sounds
 
-    HexChat must be capable of playing the sound using /SPLAY <soundfile>.  On Windows, this means just .wav files, other platform support may vary.
+    HexChat must be capable of playing the sound using /SPLAY <soundfile>.  On Windows, this means just .wav files,
+    other platform support may vary.
 
 /alerts mute <alerts...>|ALL
 /alerts unmute <alerts...>|ALL
@@ -62,6 +66,9 @@
 
 /alerts preview <alerts...>|ALL
     Previews one or more alerts.  If a single alert is specified, sound will be played as well.
+
+/alerts colors
+    Shows a list of the available colors.
 
 ** Import/Export and Sharing **
 /alerts dump <alerts...>|ALL
@@ -86,7 +93,7 @@ The following settings can manipulated using /alerts set, /alerts show and /aler
 :word ON|OFF
     Determines whether the pattern matches on word boundaries only ("ON") or anywhere ("OFF")
     If pattern is "Jon" and input text is "Jonathan", the input will match if word is OFF, but not if word is ON.
-    Only used with patterns.  Ignored with a regex.
+    Only used with patterns.  This setting is ignored if you are using regex matching instead of pattern matching.
 
 :bold ON|OFF|LINE
 :italic ON|OFF|LINE
@@ -120,30 +127,48 @@ The following settings can manipulated using /alerts set, /alerts show and /aler
 :sound <sound>
     See /alerts pattern, /alerts regex and /alerts sound for instructions.  These settings must be the last setting
     on the line when using /alerts set.
+
+:focus ON|OFF|FORCE
+    Whether or not to switch to the window receiving a triggering message.  This only switches what window Hexchat
+    has active, it won't cause Hexchat to steal focus from another program.  To avoid inadvertent breaks mid-typing,
+    this not trigger if you have text in the input box unless FORCE is specified.
+
+:notify ON|OFF
+    If ON, adds a line in your current window if receiving a triggering message in a different window.  Won't trigger
+    if focus is ON and it successfully changes windows.
+
+:flash ON|OFF
+    Whether or not to flash the titlebar upon receiving a triggering message.
+
+:copy <window>|ON|OFF
+    If set, copies triggered alerts to the specified window, which will be created if it doesn't already exist.
+    If ON, the window is named ">>Alerts<<".
 """
-__module_name__ = "alerts"
-__module_version__ = "0.4.20160108.004"
-__module_description__ = "Custom highlighting and alert messages -- by Dewin"
-
-
-# Ratsignal.py - https://gist.github.com/anonymous/858898ee52d63cbdb626
-# Soundalert.py - https://github.com/hexchat/hexchat-addons/blob/master/python/sound-alert/soundalert.py
-
 import hexchat
 import re
 import os
 import functools
-# from threading import Thread
 from collections import OrderedDict
 import inspect
 import json
 import itertools
 import string
 
+__module_name__ = "alerts"
+__module_version__ = "0.5.20160312.001"
+__module_description__ = "Custom highlighting and alert messages -- by Dewin"
+
+
+# I used the following scripts as a starting point.  This is way beyond them now, but they're here for reference.
+# Ratsignal.py - https://gist.github.com/anonymous/858898ee52d63cbdb626
+# Soundalert.py - https://github.com/hexchat/hexchat-addons/blob/master/python/sound-alert/soundalert.py
+
+
 try:
     from collections.abc import Iterable
 except ImportError:
     from collections import Iterable
+
 
 def playsound(filename):
     """
@@ -155,6 +180,7 @@ def playsound(filename):
     """
     hexchat.command("splay \"{}\"".format(filename))
 
+
 sound_search_path = []
 try:
     use_old_sounds = bool(int(hexchat.get_pluginpref("python_alerts_use_old_sounds")))
@@ -165,34 +191,13 @@ if os.name == "nt":
     sound_search_path = [
         "%APPDATA%\\Hexchat\\Sounds", "%ProgramFiles%/Hexchat/Sounds", "%ProgramFiles(x86)%/Hexchat/Sounds"
     ]
-    # Winsound is installed by default on Windows platforms
-    if use_old_sounds:
-        import winsound
-        def playsound(filename):
-            winsound.PlaySound(filename, winsound.SND_FILENAME ^ winsound.SND_ASYNC)
-
 elif os.name == "posix":
     sound_search_path = [
         "~/.config/hexchat/sounds", "/sbin/HexChat/share/sounds", "/usr/sbin/HexChat/share/sounds",
         "/usr/local/bin/HexChat/share/sounds",
     ]
 
-    if use_old_sounds:
-        try:
-            import pyxine
-        except ImportError:
-            print("alerts: Pyxine is missing!  Sound alerts will not be available.")
-            print("Install xine, then run 'pip install pyxine' to use sounds in this plugin.")
-        else:
-            def playsound(filename):
-                xine = pyxine.Xine()
-                stream = xine.stream_new()
-                stream.open(filename)
-                stream.Play()
-
 sound_search_path = list(os.path.expandvars(os.path.expanduser(path)) for path in sound_search_path)
-# Since we reformat text before sending it, we maintain a blacklist of messages we emit.
-# An item is removed from this blacklist is cleared when a matching message is received.
 
 
 class IRC(object):
@@ -207,7 +212,7 @@ class IRC(object):
     MAXCOLOR = 99
 
     @classmethod
-    def color(cls, fg=None, bg=None):
+    def color(cls, fg=None, bg=None, text=None):
         if isinstance(fg, Iterable) and bg is None:
             return cls.color(*fg)
 
@@ -218,7 +223,25 @@ class IRC(object):
         rv = cls.COLOR + fg
         if bg:
             rv += "," + bg
-        return rv
+        if text is None:
+            return rv
+        return rv + text + rv
+
+    @classmethod
+    def bold(cls, text):
+        return cls.BOLD + text + cls.BOLD
+
+    @classmethod
+    def italic(cls, text):
+        return cls.ITALIC + text + cls.ITALIC
+
+    @classmethod
+    def underline(cls, text):
+        return cls.UNDERLINE + text + cls.UNDERLINE
+
+    @classmethod
+    def reverse(cls, text):
+        return cls.REVERSE + text + cls.REVERSE
 
 
 class Color(tuple):
@@ -237,40 +260,131 @@ class Color(tuple):
         return Color(color[:2])
 
 
+class Context:
+    """Light wrapper around Hexchat's contexts."""
+    #: Attrs that return methods.
+    _forward_properties = {'set', 'prnt', 'emit_print', 'command', 'get_info', 'get_list'}
+    #: Attrs that return get_list() results.
+    _forward_lists = {'channels', 'dcc', 'users', 'ignore', 'notify'}
+
+    def __init__(self, context):
+        self.context = context
+        self._id = None
+
+    def print(self, *a, **kw):
+        return self.context.prnt(*a, **kw)
+
+    def __getattr__(self, item):
+        if item in self._forward_properties:
+            return getattr(self.context, item)
+        if item in self._forward_lists:
+            return self.context.get_list(item)
+        return self.context.get_info(item)
+
+    @classmethod
+    def _make(cls, context):
+        if context is None:
+            return None
+        return cls(context)
+
+    @classmethod
+    def focused(cls):
+        return cls.find()
+
+    @classmethod
+    def current(cls):
+        return cls._make(hexchat.get_context())
+
+    @classmethod
+    def find(cls, server=None, channel=None, id=None):
+        if id is None:
+            return cls._make(hexchat.find_context(server, channel))
+        channel = channel.lower()
+        for ch in hexchat.get_context().get_list('channels'):
+            if ch.id == id and ch.channel == channel:
+                return cls(ch.context)
+        return None
+
+    def __eq__(self, other):
+        if other is None:
+            return False
+        return self.context == other.context
+
+    @property
+    def id(self):
+        """Returns the server ID of this context.  None if it could not be located."""
+        # Unfortunately, Hexchat doesn't provide a sane way to get a context's server ID.
+        if self._id is None:
+            channels = hexchat.get_list('channels')
+            if channels is not None:
+                for channel in channels:
+                    if channel.context == self.context:
+                        self._id = channel.id
+                        break
+        return self._id
+
+
 class Alert(object):
     """
     Stores a single alert.
     """
     LINE = object()  # Symbol
-    FORMAT_ATTRIBUTES = ('bold', 'italic', 'underline', 'reverse')
-    BOOLEAN_ATTRIBUTES = ('word', 'mute', 'enabled')
+    FORCE = object()
+
+    # Tristate attributes (boolean + third state)
+    # attrname: (third state value, third state value)
+    TRISTATE_ATTRIBUTES = OrderedDict((
+        ('bold', ('line', LINE)),
+        ('italic', ('line', LINE)),
+        ('underline', ('line', LINE)),
+        ('reverse', ('line', LINE)),
+        ('focus', ('force', FORCE)),
+    ))
+    #
+    BOOLEAN_ATTRIBUTES = ('word', 'mute', 'enabled', 'notify', 'flash')
     COLOR_ATTRIBUTES = ('color', 'linecolor')
     NONECOLORTUPLE = (None, None)
+    EXPORT_ATTRS = {
+        'b': 'bold',
+        'e': 'enabled',
+        'f': 'flash',
+        'g': 'focus',  # g=grab, close enough
+        'i': 'italic',
+        'm': 'mute',
+        'n': 'notify',
+        'r': 'reverse',
+        'u': 'underline',
+        'w': 'word',
+    }
+
+    word = True
+    regex = None
+
+    bold = False
+    italic = False
+    underline = False
+    reverse = False
+    color = None
+    linecolor = None
+
+    _sound = None
+    abs_sound = None
+
+    wrap_line = None
+    wrap_match = None
+    replacement = None
+
+    enabled = True
+    mute = False
+
+    notify = False
+    focus = False
+    flash = False
+    copy = False
 
     def __init__(self, name):
         self.name = name
-        self.word = True
         self.pattern = name
-        self.regex = None
-
-        self.bold = False
-        self.italic = False
-        self.underline = False
-        self.reverse = False
-        self.color = None
-        self.linecolor = None
-
-        self._sound = None
-        self.abs_sound = None
-        self.update()
-
-        self.wrap_line = None
-        self.wrap_match = None
-        self.replacement = None
-
-        self.enabled = True
-        self.mute = False
-
         self.update()
 
     def update_wrapper(self):
@@ -354,11 +468,13 @@ class Alert(object):
         else:
             self.replacement = None
 
-    def handle(self, channel, event, words):
-        if not self.enabled:
+    def handle(self, channel, event, words, current, focused, nickname, is_channel):
+        if not self.enabled:  # Skip disabled events
             return False
-        if not self.regex.search(words[1]):
+        if not self.regex.search(words[1]):  # Skip non-matching events
             return False
+
+        is_pm = not is_channel
 
         if self.strip:
             words[1] = hexchat.strip(words[1], -1, self.strip)
@@ -368,13 +484,45 @@ class Alert(object):
             words[1] = self.wrap_line[0] + words[1] + self.wrap_line[1]
             words[0] = self.wrap_line[0] + words[0] + self.wrap_line[1]
 
-        hexchat.unhook(event_hooks[event])
         hexchat.emit_print(event, *words)
-        event_hooks[event] = hexchat.hook_print(event, message_hook, event)
 
         if self.abs_sound is not None and not self.mute:
             playsound(self.abs_sound)
 
+        if self.copy:
+            copy_to = '>>alerts<<' if self.copy is True else self.copy
+            copy_context = Context.find(current.network, copy_to, current.id)
+            if not copy_context:
+                current.command("QUERY -nofocus " + copy_to)
+                copy_context = Context.find(current.network, copy_to, current.id)
+            if not copy_context:
+                print(IRC.bold("** Unable to open/create query window **"))
+            else:
+                if is_pm:
+                    name = nickname + ":(PM)"
+                else:
+                    name = nickname + ":" + channel
+                copy_context.emit_print("Channel Message", name, words[1])
+
+        if focused != current:
+            if self.focus and (self.focus is self.FORCE or not focused.inputbox):
+                current.command("GUI FOCUS")
+            elif self.notify:
+                if current.network == event.network:
+                    network = ""
+                else:
+                    network = "/" + event.network
+
+                if is_pm:
+                    prefix = "[PM from {nickname}{network}]: ".format(nickname=nickname, network=network)
+                else:
+                    prefix = "[{nickname} on {channel}{network}]: ".format(
+                        nickname=nickname, channel=channel, network=network
+                    )
+                focused.print(prefix + words[1])
+
+        if self.flash:
+            hexchat.command("GUI FLASH")
         return True
 
     @property
@@ -408,20 +556,21 @@ class Alert(object):
 
     def export_dict(self):
         # dict: n=name, f=formatting and flags, s=sound (if set), p=pattern (if needed), r=regex (if needed)
+        # c=copy (if enabled)
         rv = {'n': self.name}
 
         # Format key:
         # formats,color,linecolor
         # formats is "bBiIuUrRw" based on what's set.
         f = []
-        for attr in itertools.chain(self.FORMAT_ATTRIBUTES, self.BOOLEAN_ATTRIBUTES):  # Uses bBiIuUrR and wem
+        for letter, attr in self.EXPORT_ATTRS.items():
             value = getattr(self, attr)
             if not value:
                 continue
-            if value is self.LINE:
-                f.append(attr[0].upper())
+            if attr in self.TRISTATE_ATTRIBUTES and value is self.TRISTATE_ATTRIBUTES[attr][1]:
+                f.append(letter.upper())
             else:
-                f.append(attr[0].lower())
+                f.append(letter.lower())
 
         for attr in self.COLOR_ATTRIBUTES:
             f.append(",")
@@ -438,6 +587,10 @@ class Alert(object):
 
         if self.sound:
             rv['s'] = self.sound
+
+        if self.copy:
+            rv['c'] = 'on' if self.copy is True else self.copy
+
         return rv
 
     def export_json(self):
@@ -455,15 +608,12 @@ class Alert(object):
                     setattr(rv, attr, None)
                     continue
                 setattr(rv, attr, Color.fromstring(value))
-
-            for attr in cls.FORMAT_ATTRIBUTES:  # Uses bBiIuUrR
-                if attr[0].lower() in fmt:
-                    setattr(rv, attr, True)
-                elif attr[0].upper() in fmt:
-                    setattr(rv, attr, cls.LINE)
-
-            for attr in cls.BOOLEAN_ATTRIBUTES:
-                setattr(rv, attr, attr[0].lower() in fmt)
+            for letter, attr in cls.EXPORT_ATTRS.items():
+                if letter.upper() in fmt and attr in cls.TRISTATE_ATTRIBUTES:  # Handles the oddballs.
+                    if attr in cls.TRISTATE_ATTRIBUTES:
+                        setattr(rv, attr, cls.TRISTATE_ATTRIBUTES[attr][1])
+                else:
+                    setattr(rv, attr, letter.lower() in fmt)  # Sets initial true/false
 
         if 's' in d:
             rv.sound = d['s']
@@ -472,6 +622,11 @@ class Alert(object):
         elif 'r' in d:
             rv.pattern = None
             rv.regex = re.compile(d['r'], re.IGNORECASE)
+
+        if 'c' in d:
+            rv.copy = True if d['c'] == 'on' else d['c']
+        else:
+            rv.copy = False
         rv.update()
         return rv
 
@@ -480,18 +635,26 @@ class Alert(object):
         return cls.import_dict(json.loads(s))
 
 
+_ignore_messages = False
 def message_hook(words, word_eol, event):
-    channel = hexchat.get_info('channel')
+    global _ignore_messages
+    if not _ignore_messages:
+        try:
+            _ignore_messages = True
+            current = Context.current()
+            attrs = {
+                'current': current,
+                'focused': Context.focused(),
+                'channel': current.channel,
+                'is_channel': event.lower().startswith("channel"),
+                'nickname': words[0],
+            }
 
-    # try:
-    #     temporary_blacklist.remove((channel, event, words))
-    #     return None
-    # except ValueError:
-    #     pass
-
-    for alert in alerts.values():
-        if alert.handle(channel, event, words):
-            return hexchat.EAT_ALL
+            for alert in alerts.values():
+                if alert.handle(event=event, words=words, **attrs):
+                    return hexchat.EAT_ALL
+        finally:
+            _ignore_messages = False
     return None
 
 
@@ -646,25 +809,31 @@ def parse_bool(
     return result
 
 
-def parse_format(s):
-    if s.strip().lower() == 'line':
-        return Alert.LINE
+def parse_format(s, alternates=None):
+    if alternates:
+        s = s.strip().lower()
+        if s in alternates:
+            return alternates[s]
     return parse_bool(s)
 
 
-def cmd_setshow_format(alert, setting, value=None):
+def cmd_setshow_tristate(alert, setting, value=None):
     isset = value is not None
+    text, obj = alert.TRISTATE_ATTRIBUTES[setting]
     if isset:
         try:
-            value = parse_format(value)
+            value = parse_format(value, {text: obj})
         except ValueError:
-            raise InvalidCommandException("Value for {setting} must must be one of (ON|OFF|LINE)".format(setting))
+            raise InvalidCommandException(
+                "Value for {setting} must must be one of (ON|OFF|{text})".format(setting=setting, text=text.upper())
+            )
+
         setattr(alert, setting, value)
         alert.update()
 
     value = getattr(alert, setting)
-    if value is alert.LINE:
-        value = 'line'
+    if value is obj:
+        value = text
     else:
         value = 'on' if value else 'off'
     alert.print("{setting} {action} '{value}'".format(setting=setting, value=value, action='set to' if isset else 'is'))
@@ -684,6 +853,24 @@ def cmd_setshow_boolean(alert, setting, value=None):
     value = 'on' if getattr(alert, setting) else 'off'
     alert.print("{setting} {action} '{value}'".format(setting=setting, value=value, action='set to' if isset else 'is'))
     return True
+
+
+def cmd_setshow_copy(alert, value=None):
+    isset = value is not None
+    if isset:
+        try:
+            alert.copy = parse_bool(value)
+        except ValueError:
+            alert.copy = value
+        value = alert.copy
+        alert.update()
+
+    if value:
+        if value is True:
+            value = '>>alerts<<'
+        alert.print("copy {action} on (copying to '{copy}')".format(copy=value, action='set to' if isset else 'is'))
+    else:
+        alert.print("copy {action} off".format(action='set to' if isset else 'is'))
 
 
 def cmd_setshow_color(alert, setting, value=None):
@@ -725,7 +912,7 @@ def cmd_setshow_pattern(alert, value=None):
     else:
         alert.print(
             "Pattern {action} '{value}' (word matching is {word})"
-            .format(value=value, action='set to' if isset else 'is', word='on' if alert.word else 'OFF')
+            .format(value=alert.pattern, action='set to' if isset else 'is', word='on' if alert.word else 'OFF')
         )
     return True
 
@@ -772,7 +959,7 @@ def cmd_setshow_sound(alert, value=None):
         if alert.abs_sound:
             msg = "Sound {action} {0.sound} (found at {0.abs_sound})"
         else:
-            msg = "Sound {action} {0.sound} " + IRC.BOLD + "(file not found in search path)" + IRC.ORIGINAL
+            msg = "Sound {action} {0.sound} " + IRC.bold("(file not found in search path)")
         alert.print(msg.format(alert, action='set to' if isset else 'is'))
     elif isset:
         alert.print("Sound removed.")
@@ -783,7 +970,11 @@ def cmd_setshow_sound(alert, value=None):
 
 @alert_command(
     "set", raw=True,
-    help="<alert> (sound|pattern|regex|" + "|".join(itertools.chain(Alert.FORMAT_ATTRIBUTES, Alert.BOOLEAN_ATTRIBUTES, Alert.BOOLEAN_ATTRIBUTES)) + " [<value>]: Change alert settings."
+    help=(
+        "<alert> (sound|pattern|regex|copy|" +
+        "|".join(itertools.chain(Alert.TRISTATE_ATTRIBUTES, Alert.BOOLEAN_ATTRIBUTES)) +
+        " [<value>]: Change alert settings."
+    )
 )
 def cmd_set(alert, words, word_eol):
     for ix in range(0, len(words), 2):
@@ -793,14 +984,17 @@ def cmd_set(alert, words, word_eol):
             value_eol = word_eol[ix+1]
         else:
             value, value_eol = None, None
-        if setting in alert.FORMAT_ATTRIBUTES:
-            cmd_setshow_format(alert, setting, value)
+        if setting in alert.TRISTATE_ATTRIBUTES:
+            cmd_setshow_tristate(alert, setting, value)
             continue
         if setting in alert.BOOLEAN_ATTRIBUTES:
             cmd_setshow_boolean(alert, setting, value)
             continue
         if setting in alert.COLOR_ATTRIBUTES:
             cmd_setshow_color(alert, setting, value)
+            continue
+        if setting == 'copy':
+            cmd_setshow_copy(alert, value)
             continue
         if setting == 'pattern':
             cmd_setshow_pattern(alert, value_eol)
@@ -818,21 +1012,23 @@ def cmd_set(alert, words, word_eol):
 @alert_command("show")
 def cmd_show(alert, *show):
     show = list(setting.strip().lower() for setting in show)
-    if 'all' in show:
+    if 'all' in show or not show:
         show = list(
             itertools.chain(
-                ["sound", "pattern", "regex"],
-                Alert.FORMAT_ATTRIBUTES, Alert.BOOLEAN_ATTRIBUTES, Alert.BOOLEAN_ATTRIBUTES
+                ["sound", "pattern", "regex", "focus"],
+                Alert.TRISTATE_ATTRIBUTES, Alert.BOOLEAN_ATTRIBUTES
             )
         )
 
     for setting in show:
-        if setting in alert.FORMAT_ATTRIBUTES:
-            cmd_setshow_format(alert, setting)
+        if setting in alert.TRISTATE_ATTRIBUTES:
+            cmd_setshow_tristate(alert, setting)
         elif setting in alert.BOOLEAN_ATTRIBUTES:
             cmd_setshow_boolean(alert, setting)
         elif setting in alert.COLOR_ATTRIBUTES:
             cmd_setshow_color(alert, setting)
+        elif setting == 'copy':
+            cmd_setshow_copy(alert)
         elif setting == 'pattern':
             cmd_setshow_pattern(alert)
         elif setting == 'regex':
@@ -903,10 +1099,16 @@ def cmd_preview(items, is_all=None, original=None, **unused):
             playsound(alert.abs_sound)
 
 
+@command("version")
+def cmd_version():
+    print("alerts.py version {}".format(__module_version__))
+
+
 @command("help", help="[<command-or-setting]>: Shows help.")
 def cmd_help(search=None):
     if not search:
-        print("{name} version {version} - {description}"
+        print(
+            "{name} version {version} - {description}"
             .format(name=__module_name__, version=__module_version__, description=__module_description__)
         )
     else:
@@ -922,7 +1124,7 @@ def cmd_help(search=None):
         is_blank = line == "" or line[0] in string.whitespace
 
         if line.startswith('**'):
-            line = IRC.UNDERLINE + IRC.BOLD + line.strip('*' + string.whitespace).upper() + IRC.ORIGINAL
+            line = IRC.underline(IRC.bold(line.strip('*' + string.whitespace).upper()))
             section = line
             buffer.clear()
             if search:
@@ -954,7 +1156,7 @@ def cmd_help(search=None):
         elif line.startswith("/alerts") or line.startswith(':'):
             if line.startswith(':'):
                 line = line[1:]
-            line = IRC.BOLD + line + IRC.BOLD
+            line = IRC.bold(line)
 
         if search and not found_start:
             if not is_blank:
@@ -973,33 +1175,45 @@ def cmd_dump(items, is_all=None, **kwargs):
         raise InvalidCommandException()
 
     for alert in items.values():
+        settings = []
         print("/alerts add {0.name}".format(alert))
         if alert.pattern is not None:
             if alert.pattern != alert.name:
                 print("/alerts pattern {0.name} {0.pattern}".format(alert))
+            if alert.word is not alert.__class__.word:
+                settings.extend(("word", 'on' if alert.word else 'off'))
         else:
             print("/alerts regex {0.name} {0.regex.pattern}".format(alert))
 
-        settings = []
-        for attr in alert.FORMAT_ATTRIBUTES:
+        for attr, (text, obj) in alert.TRISTATE_ATTRIBUTES.items():
             value = getattr(alert, attr)
-            if not value:
+            if value is getattr(alert.__class__, attr):
                 continue
-            value = "line" if value is alert.LINE else "on"
+            if value is obj:
+                value = text
+            else:
+                value = 'on' if value else 'off'
             settings.extend([attr, value])
+        for attr in alert.BOOLEAN_ATTRIBUTES:
+            value = getattr(alert, attr)
+            if value is getattr(alert.__class__, attr) or (attr == 'word' and alert.pattern is None):
+                continue
+            settings.extend([attr, 'on' if value else 'off'])
         for attr in alert.COLOR_ATTRIBUTES:
             value = getattr(alert, attr)
             if not value:
                 continue
             settings.extend([attr, value.str(",")])
-        if not alert.enabled:
-            settings.append("enabled off")
-        if alert.mute:
-            settings.append("mute on")
-        if alert.pattern is not None and not alert.word:
-            settings.append("word off")
+        # if not alert.enabled:
+        #     settings.append("enabled off")
+        # if alert.mute:
+        #     settings.append("mute on")
+        # if alert.pattern is not None and not alert.word:
+        #     settings.append("word off")
         if alert.sound:
             settings.extend(["sound", alert.sound])
+        if alert.copy:
+            settings.extend(["copy", 'on' if alert.copy is True else alert.copy])
 
         if settings:
             print("/alerts set {0.name} {1}".format(alert, " ".join(settings)))
@@ -1042,6 +1256,7 @@ def cmd_share(*names):
             "SAY [HexChat alerts.py plugin]: Add alert '{name}' with /alerts import {output}"
             .format(name=name, output=output)
         )
+
 
 @command("import", help="<json>: Import JSON data.", collect=True)
 def cmd_import(data):
@@ -1101,6 +1316,24 @@ def cmd_copy(alert, new):
     newalert.print("Copied from {0.name}".format(alert))
 
 
+@command("colors", help=": Shows a list of colors")
+def cmd_colors():
+    rowsize = 16
+    print("Listing all available colors:")
+    for offset in range(IRC.MINCOLOR, IRC.MAXCOLOR+1, rowsize):
+        print("  {colors}{reset}".format(
+            colors=IRC.bold("".join(
+                "{1} {0:02}{2} {0:02} ".format(c, IRC.color(0, c), IRC.color(1, c))
+                for c in range(offset, min(offset+rowsize, IRC.MAXCOLOR+1))
+            )),
+            reset=IRC.ORIGINAL
+        ))
+    print(
+        "HINT: Colors 0-15 correspond to the 'mIRC colors' in your Hexchat preferences.  16-31 correspond to your"
+        " 'Local colors'.  Subsequent numbers may map to other interface colors."
+    )
+
+
 def command_hook(words, word_eol, userdata):
     if len(words) < 2:
         print("Type '/alerts help' for full usage instructions.")
@@ -1156,14 +1389,8 @@ def load():
 def unload_hook(userdata):
     save()
 
-
-# Debug:  :Epic23!IceChat9@mib-BFA70C3F.gv.shawcable.net PRIVMSG #RatChat :Derry[PingMeIfNeeded] i Pmed you :P
-# Debug:  :Logan_Aigaion!Mibbit@mib-65D3B4C5.fbx.proxad.net PRIVMSG #RatChat :ACTION yawns
-# Debug:  :Edmondson[DeepSpace]!Edmondson@mib-B9C62BA2.ip-37-187-192.eu NOTICE Dewin[4kly|coding] :like this?
-
-# Format: username PRIVMSG/NOTICE CHANNEL :message
 print(
-    ("{name} version {version} loaded.  Type " + IRC.BOLD + "/alerts help" + IRC.ORIGINAL + " for usage instructions")
+    ("{name} version {version} loaded.  Type " + IRC.bold("/alerts help") + " for usage instructions")
     .format(name=__module_name__, version=__module_version__)
 )
 load()
