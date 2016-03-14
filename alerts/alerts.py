@@ -508,10 +508,10 @@ class Alert(object):
             if self.focus and (self.focus is self.FORCE or not focused.inputbox):
                 current.command("GUI FOCUS")
             elif self.notify:
-                if current.network == event.network:
+                if current.network == focused.network:
                     network = ""
                 else:
-                    network = "/" + event.network
+                    network = "/" + focused.network
 
                 if is_pm:
                     prefix = "[PM from {nickname}{network}]: ".format(nickname=nickname, network=network)

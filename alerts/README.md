@@ -25,7 +25,10 @@ Improved alerts for Hexchat
 * Sound is untested on anything but Windows.  Sounds must be playable using Hexchat's `/SPLAY` command.
 
 ## Changelog
-### 0.5
+### 0.5.1
+* Fix issue with notify looking at the wrong variable when comparing networks.
+
+### 0.5-rc1
 * Add `/alerts colors` which displays a sample of all of the colors by number.
 * Add `/alerts set copy ON|OFF|windowtitle` to copy all triggering messages to a custom query window.
 * Add `/alerts focus ON|OFF|FORCE` to focus the window that receives an alert.  If enabled, Hexchat will switch to the
