@@ -25,6 +25,9 @@ Improved alerts for Hexchat
 * Sound is untested on anything but Windows.  Sounds must be playable using Hexchat's `/SPLAY` command.
 
 ## Changelog
+### 0.5.2
+* Fix exception spam when receiving an empty message.
+
 ### 0.5.1
 * Fix issue with notify looking at the wrong variable when comparing networks.
 

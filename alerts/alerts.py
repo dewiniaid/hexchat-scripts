@@ -469,6 +469,8 @@ class Alert(object):
             self.replacement = None
 
     def handle(self, channel, event, words, current, focused, nickname, is_channel):
+        if len(words) < 2:  # Blank ACTIONs can cause this.
+            return False
         if not self.enabled:  # Skip disabled events
             return False
         if not self.regex.search(words[1]):  # Skip non-matching events
