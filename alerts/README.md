@@ -8,7 +8,7 @@ Improved alerts for Hexchat
 * The correct version of [Python](https://www.python.org/downloads/) for the Python 3 plugin.  (Newer versions will not 
   work.)
   - Hexchat 2.10.2 required Python **3.4.x**
-  - Hexchat 2.12 requires Python **3.5.x**
+  - Hexchat 2.12.x requires Python **3.5.x**
 
 ## Installation Instructions
 1. Save `alerts.py` to your Hexchat addons directory.  On Windows, this is located at `%appdata%\HexChat\addons`.  
@@ -25,6 +25,13 @@ Improved alerts for Hexchat
 * Sound is untested on anything but Windows.  Sounds must be playable using Hexchat's `/SPLAY` command.
 
 ## Changelog
+### 0.6
+* Alerts can now be renamed using `/alerts rename <oldname> <newname>`.  This does not change what text they match on.
+* Alerts can now be moved to appear at a different position in the alert list using 
+  `/alerts move <alert> {BEFORE <target>|AFTER <target>|FIRST|LAST`.  
+  Since only the the first matching alert will trigger, this allows more fine-tuned control over which alert triggers.
+  
+     
 ### 0.5.2
 * Fix exception spam when receiving an empty message.
 

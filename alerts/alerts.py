@@ -20,6 +20,13 @@
 /alerts off <alerts...>|ALL
     Enables or disable the selected alert(s).
 
+/alerts move <alert> {FIRST|LAST|BEFORE <target>|AFTER <target>}
+    Move an alert to the specified place on the list of alerts.  Only the first matching alert triggers if multiple
+    alerts match for an incoming line of text; this can be used to control which alert is first.
+
+/alerts rename <alert> <newname>
+    Change the name of an alert.  Note that this does not change what the alert matches.
+
 ** Pattern Matching **
 /alerts pattern <alert> [<pattern>]
     Sets the pattern for alert, or shows the current pattern if a new pattern is not specified.
@@ -144,7 +151,6 @@ The following settings can manipulated using /alerts set, /alerts show and /aler
     If set, copies triggered alerts to the specified window, which will be created if it doesn't already exist.
     If ON, the window is named ">>Alerts<<".
 """
-import hexchat
 import re
 import os
 import functools
@@ -153,9 +159,13 @@ import inspect
 import json
 import itertools
 import string
+import collections.abc
+
+# noinspection PyUnresolvedReferences
+import hexchat
 
 __module_name__ = "alerts"
-__module_version__ = "0.5.20160312.001"
+__module_version__ = "0.6.20161130.001"
 __module_description__ = "Custom highlighting and alert messages -- by Dewin"
 
 
@@ -324,10 +334,225 @@ class Context:
         return self._id
 
 
+# noinspection PyProtectedMember
+class AlertDict(collections.abc.MutableMapping):
+    _head = None
+    _tail = None
+    _dict = {}
+    __default = object()
+
+    def __init__(self, it=None):
+        if not it:
+            return
+        # Could make this more efficient for bulk inserts, but meh.
+        for alert in it:
+            self.append(alert)
+
+    # region Linked-list-like behaviors
+    def _link(self, node, *args):
+        """Helper function for linked list manipulation."""
+        prev = node
+        for next in args:
+            if prev:
+                if next == prev:
+                    raise ValueError("A node cannot be located after itself.")
+                prev._next = next
+            else:
+                self._head = next
+
+            if next:
+                next._prev = prev
+            else:
+                self._tail = prev
+            prev = next
+
+    def _addormove(self, alert, add=False, prev=None, next=None):
+        """Add/move new alerts to an arbitrary location in the list.  Helper function."""
+        if add:
+            lowername = alert.name.lower()
+            if lowername in self:
+                if self[lowername] == alert:
+                    raise ValueError("Alert {.name!r} is already in this list.".format(alert))
+                else:
+                    raise ValueError("Name {!r} is in use.".format(alert.name))
+            if alert._parent:
+                raise ValueError("Alert {.name!r} is already in this list.".format(alert))
+        elif alert._parent is not self:
+            raise ValueError("Alert {.name!r} is not a member of this list", alert)
+
+        if prev and prev._parent is not self:
+            raise ValueError("Previous Alert {!r} is not a member of this list", prev)
+        if next and next._parent is not self:
+            raise ValueError("Next alert {!r} is not a member of this list", next)
+
+        if next and not prev:
+            prev = next._prev
+        elif prev and not next:
+            next = prev._next
+
+        if add:
+            alert._parent = self
+            # noinspection PyUnboundLocalVariable
+            self._dict[lowername] = alert
+        else:
+            self._link(alert._prev, alert._next)
+        self._link(prev, alert, next)
+
+        return alert
+
+    def append(self, alert):
+        """Add new alert to end of list."""
+        return self._addormove(alert, True, prev=self._tail)
+
+    def insertbefore(self, alert, before):
+        """Add new alert before an existing alert.  If before is None, same as append."""
+        if before:
+            return self._addormove(alert, True, next=before)
+        return self._addormove(alert, True, prev=self._tail)
+
+    def insertafter(self, alert, after):
+        """Add new alert after an existing alert.  If after is None, inserts at the beginning of the list."""
+        if after:
+            return self._addormove(alert, True, prev=after)
+        return self._addormove(alert, True, next=self._head)
+
+    def remove(self, alert):
+        """Removes an item from this list."""
+        if alert._parent is not self:
+            raise ValueError("Alert {.name!r} is not a member of this list", alert)
+
+        self._link(alert._prev, alert._next)
+        alert._prev = alert._next = alert._parent = None
+        del self._dict[alert.name.lower()]
+        return alert
+
+    unlink = remove
+
+    def rename(self, alert, name):
+        """Renames an item in this list."""
+        if alert._parent is not self:
+            raise ValueError("Alert {.name!r} is not a member of this list", alert)
+        newname = name.lower()
+        oldname = alert.name.lower()
+        if newname != oldname:
+            if newname in self._dict:
+                raise ValueError("Name {!r} is already in use.".format(name))
+            del self._dict[oldname]
+            self._dict[newname] = alert
+        alert._name = name
+
+    def movebefore(self, alert, before):
+        if before:
+            return self._addormove(alert, False, next=before)
+        return self._addormove(alert, False, prev=self._tail)
+
+    def moveafter(self, alert, after):
+        if after:
+            return self._addormove(alert, False, prev=after)
+        return self._addormove(alert, False, next=self._head)
+    # endregion
+
+    # region Item accessors
+    def __getitem__(self, key):
+        return self._dict[key.lower()]
+
+    def __setitem__(self, key, value):
+        if key in self and self[key] == value:
+            return
+        lowerkey = key.lower()
+        if lowerkey != value.name.lower():
+            raise ValueError("Key and alert name mismatch: {!r} != {!r}".format(key, value.name))
+        self.append(value)
+
+    def __delitem__(self, key):
+        self.remove(self[key.lower()])
+    # endregion
+
+    # region Standard mutable mapping methods
+    def clear(self):
+        for alert in self._dict.values():
+            alert._prev = alert._next = alert._parent = None
+        self._head = self._tail = None
+        self._dict = {}
+
+    def popitem(self):
+        if self._tail:
+            alert = self.remove(self._tail)
+            return alert.name, alert
+        raise KeyError
+    # endregion
+
+    # region Standard mutable mapping magic methods
+    def __contains__(self, key):
+        return key in self._dict
+
+    def __len__(self):
+        return len(self._dict)
+    # endregion
+
+    # region Iteration handling
+    class _KeysView(collections.abc.KeysView):
+        def __iter__(self):
+            yield from self._mapping.iter_keys()
+
+    class _ValuesView(collections.abc.ValuesView):
+        def __iter__(self):
+            yield from self._mapping.iter_values()
+
+        def __contains__(self, value):
+            try:
+                return self._mapping[value.name] == value
+            except (KeyError, AttributeError):
+                return False
+
+    class _ItemsView(collections.ItemsView):
+        def __iter__(self):
+            yield from self._mapping.iter_items()
+
+        def __contains__(self, item):
+            key, value = item
+            try:
+                if value.name != key:
+                    return False
+                return self._mapping[key] == value
+            except (AttributeError, KeyError):
+                return False
+
+    def keys(self):
+        return self._KeysView(self)
+
+    def values(self):
+        return self._ValuesView(self)
+
+    def items(self):
+        return self._ItemsView(self)
+
+    def iter_keys(self):
+        yield from (alert.name for alert in self.iter_values())
+    __iter__ = iter_keys
+
+    def iter_values(self):
+        count = 0
+        maxcount = 2*len(self._dict)
+        cur = self._head
+        while cur:
+            count += 1
+            if count > maxcount:
+                raise RuntimeError(
+                    "**Iterated over more items than expected ({} > {}).  Aborting.**".format(count, maxcount)
+                )
+            yield cur
+            cur = cur._next
+
+    def iter_items(self):
+        yield from ((alert.name, alert) for alert in self.iter_values())
+
+    pass  # noop to work around Pycharm region bug.
+    # endregion
+
+
 class Alert(object):
-    """
-    Stores a single alert.
-    """
+    """Stores a single alert."""
     LINE = object()  # Symbol
     FORCE = object()
 
@@ -383,9 +608,22 @@ class Alert(object):
     copy = False
 
     def __init__(self, name):
-        self.name = name
+        self._name = name
+        self.strip = 0
         self.pattern = name
+        self._parent = self._prev = self._next = None
         self.update()
+
+    @property
+    def name(self):
+        return self._name
+
+    @name.setter
+    def name(self, value):
+        if self._parent:
+            self._parent.rename(self, value)
+        else:
+            self._name = value
 
     def update_wrapper(self):
         """
@@ -473,12 +711,14 @@ class Alert(object):
             return False
         if not self.enabled:  # Skip disabled events
             return False
+        if self.pattern is None:  # Strip formatting to test regexes
+            words[1] = hexchat.strip(words[1], -1)
         if not self.regex.search(words[1]):  # Skip non-matching events
             return False
 
         is_pm = not is_channel
 
-        if self.strip:
+        if self.strip and self.pattern is not None:
             words[1] = hexchat.strip(words[1], -1, self.strip)
         if self.replacement is not None:
             words[1] = self.regex.sub(self.replacement, words[1])
@@ -638,6 +878,8 @@ class Alert(object):
 
 
 _ignore_messages = False
+
+
 def message_hook(words, word_eol, event):
     global _ignore_messages
     if not _ignore_messages:
@@ -672,7 +914,6 @@ def get_num_args(fn):
     """
     Returns a tuple of the minimum and maximum number of positional arguments to fn.
     """
-
     if hasattr(inspect, 'signature'):
         min_count = 0
         max_count = 0
@@ -697,7 +938,7 @@ def get_num_args(fn):
 
 def command(name, collect=False, help="", requires_alert=False, raw=False):
     """
-    Defines a command and its callign convention.
+    Defines a command and its calling convention.
 
     :param name: Name of the command.
     :param collect: If True, the final argument uses word_eol instead of word
@@ -727,7 +968,7 @@ def command(name, collect=False, help="", requires_alert=False, raw=False):
                 if requires_alert:
                     if not len(words):
                         raise InvalidCommandException("Incorrect number of arguments")
-                    alert = alerts.get(words[0].lower())
+                    alert = alerts.get(words[0])
                     if alert is None:
                         print("Alert '{}' not found.".format(words[0]))
                         return False
@@ -775,14 +1016,75 @@ def multi_command(fn):
     return wrapper
 
 
+@alert_command("rename", help="<alert> <newname>: Rename an alert.  (Does not change what the alert matches.")
+def cmd_rename(alert, newname):
+    if newname == alert:
+        print("Well, that was easy.")
+        return
+    if newname in alerts:
+        print("There's already an alert named '{}'".format(newname))
+        return
+    oldname = alert.name
+    alert.name = newname
+    print("Alert '{}' renamed to '{}'".format(oldname, newname))
+
+
+DIRECTION_SYNONYMS = {
+    'first': 'first', 'front': 'first', 'begin': 'first', 'beginning': 'first',
+    'last': 'last', 'end': 'last', 'back': 'last',
+    'before': 'before',
+    'after': 'after'
+}
+
+
+@alert_command("move", help="<alert> {FIRST|LAST|BEFORE <targetname>|AFTER <targetname>: Rearrange the list of alerts.")
+def cmd_move(alert, direction, targetname=None):
+    direction = direction.lower()
+    if direction not in DIRECTION_SYNONYMS:
+        raise InvalidCommandException("Invalid direction.")
+    direction = DIRECTION_SYNONYMS[direction]
+
+    if targetname is not None:
+        if direction in ('first', 'last'):
+            raise InvalidCommandException("This form of /alert move does not use a targetname.")
+        target = alerts.get(targetname)
+        if not target:
+            print("Target alert '{}' does not exist.".format(targetname))
+            return
+        if target == alert:
+            print("An alert cannot to be {} itself.".format(direction))
+            return
+    elif direction not in('first', 'last'):
+        raise InvalidCommandException("This form of /alert move requires a target.")
+    else:
+        target = None
+
+    if direction == 'first':
+        alerts.moveafter(alert, None)
+        print("Alert '{}' moved to the beginning of the list.".format(alert.name))
+        return
+    if direction == 'last':
+        alerts.movebefore(alert, None)
+        print("Alert '{}' moved to the end of the list.".format(alert.name))
+        return
+    if direction == 'before':
+        alerts.movebefore(alert, target)
+        print("Alert '{}' moved to be before '{}'".format(alert.name, target.name))
+        return
+    if direction == 'after':
+        alerts.moveafter(alert, target)
+        print("Alert '{}' moved to be after'{}'".format(alert.name, target.name))
+        return
+    raise ValueError("Reached code that should be unreachable.  Please report this as a bug.")
+
+
 @command("add", help="<alert>: Add an alert named <alert>")
 def cmd_add(name):
-    key = name.lower()
-    if key in alerts:
+    if name in alerts:
         print("Alert '{}' already exists.".format(name))
         return False
 
-    alerts[key] = Alert(name)
+    alerts.append(Alert(name))
     print("Alert '{}' added.".format(name))
     return True
 
@@ -801,6 +1103,7 @@ def cmd_delete(items, is_all=None, **unused):
         del alerts[key]
 
 
+# noinspection PyDefaultArgument
 def parse_bool(
     s,
     _map={'0': False, 'off': False, 'f': False, 'false': False, '1': True, 'on': True, 't': True, 'true': True}
@@ -848,7 +1151,7 @@ def cmd_setshow_boolean(alert, setting, value=None):
         try:
             value = parse_bool(value)
         except ValueError:
-            raise InvalidCommandException("Value for {setting} must must be one of (ON|OFF)".format(setting))
+            raise InvalidCommandException("Value for {} must must be one of (ON|OFF)".format(setting))
         setattr(alert, setting, value)
         alert.update()
 
@@ -884,13 +1187,19 @@ def cmd_setshow_color(alert, setting, value=None):
             try:
                 value = Color.fromstring(value, ',')
             except ValueError:
-                print("<value> must be one or two comma-separated integers between {} and {} or OFF.".format(IRC.MINCOLOR, IRC.MAXCOLOR))
+                print(
+                    "<value> must be one or two comma-separated integers between {} and {} or OFF."
+                    .format(IRC.MINCOLOR, IRC.MAXCOLOR)
+                )
                 return False
             for c in value:
                 if c is None:
                     continue
                 if not (IRC.MINCOLOR <= c <= IRC.MAXCOLOR):
-                    print("<value> must be one or two comma-separated integers between {} and {} or OFF.".format(IRC.MINCOLOR, IRC.MAXCOLOR))
+                    print(
+                        "<value> must be one or two comma-separated integers between {} and {} or OFF."
+                        .format(IRC.MINCOLOR, IRC.MAXCOLOR)
+                    )
                     return False
         setattr(alert, setting, value)
 
@@ -1116,11 +1425,12 @@ def cmd_help(search=None):
     else:
         search = search.lower().strip()
         search = ("/alerts " + search, ":" + search)
-        found_start = False
-        found_end = False
 
     section = None
     buffer = []
+
+    found_start = False
+    found_end = False
 
     for line in __doc__.strip().splitlines():
         is_blank = line == "" or line[0] in string.whitespace
@@ -1314,9 +1624,40 @@ def cmd_copy(alert, new):
     newalert.name = new
     newalert.pattern = new
     newalert.update()
-    alerts[key] = newalert
+    alerts.insertafter(newalert, alert)
     newalert.print("Copied from {0.name}".format(alert))
 
+
+@command("debug")
+def cmd_debug():
+    def _print_alert():
+        print(
+            "Key: {key}, Name: {alert.name}, Prev={prev}, Next={next}".format(
+                key=key,
+                alert=alert,
+                prev=alert._prev.name if alert._prev else '<first>',
+                next=alert._next.name if alert._next else '<last>'
+            )
+        )
+
+    print("Alert dictionary view: ")
+    for key, alert in alerts._dict.items():
+        _print_alert()
+
+    target_len = len(alerts._dict)
+    cur_len = 0
+
+    print("Alert linkedlist view: ")
+    print("Head: {}, Tail: {}".format(
+        alerts._head.name if alerts._head else '<none>',
+        alerts._tail.name if alerts._head else '<none>'
+    ))
+    for key, alert in alerts.items():
+        cur_len += 1
+        _print_alert()
+        if cur_len > target_len:
+            print("** Encountered more items than expected (list may be cyclical), aborting **")
+            return
 
 @command("colors", help=": Shows a list of colors")
 def cmd_colors():
@@ -1359,37 +1700,40 @@ def save():
 
 
 def load():
-    global alerts
-    alerts = OrderedDict()
+    alerts.clear()
     data = hexchat.get_pluginpref("python_alerts_saved")
     if data is None:
         return
     try:
         result = json.loads(data)
     except Exception as ex:
-        print("Failed to load:", str(ex))
+        print("Failed to load alerts:", str(ex))
         return False
 
     if not isinstance(result, list):
         result = [result]
 
-    for ix, chunk in enumerate(result):
+    for ix, data in enumerate(result):
         try:
-            alert = Alert.import_dict(chunk)
+            alert = Alert.import_dict(data)
         except Exception as ex:
             print("Failed to load entry {}:".format(ix), str(ex))
             ok = False
             continue
-        key = alert.name.lower()
-        if key in alerts:
+        if alert.name in alerts:
             print("Failed to load entry {}: Alert '{}' duplicated in save data.".format(ix, alert.name))
             ok = False
             continue
-        alerts[key] = alert
+        alerts.append(alert)
+
+
 
 
 def unload_hook(userdata):
     save()
+
+
+alerts = AlertDict()
 
 print(
     ("{name} version {version} loaded.  Type " + IRC.bold("/alerts help") + " for usage instructions")
