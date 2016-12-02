@@ -1345,7 +1345,7 @@ class ChatEvent(Event):
     def hostmask(self):
         if self.is_channel:
             try:
-                return next(iter(user for user in self.current.get_list('users') if user.nick == self.nick))
+                return next(iter(user.host for user in self.current.get_list('users') if user.nick == self.nick))
             except StopIteration:
                 raise ValueError("Could not find associated user in user list.")
         else:
