@@ -26,6 +26,7 @@ Improved alerts for Hexchat
 
 ## Changelog
 ### 0.6
+* Significantly cleaned up and tidied code, and probably introduced several bugs.
 * Alerts can now be renamed using `/alerts rename <oldname> <newname>`.  This does not change what text they match on.
 * Alerts can now be moved to appear at a different position in the alert list using 
   `/alerts move <alert> {BEFORE <target>|AFTER <target>|FIRST|LAST`.  

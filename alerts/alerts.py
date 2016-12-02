@@ -180,37 +180,238 @@ except ImportError:
     from collections import Iterable
 
 
-def playsound(filename):
+class Plugin:
+    # Try to collect all of our global state under one roof.
+
+    commands = OrderedDict()
+
+    DIRECTION_SYNONYMS = {
+        'first': 'first', 'front': 'first', 'begin': 'first', 'beginning': 'first',
+        'last': 'last', 'end': 'last', 'back': 'last',
+        'before': 'before',
+        'after': 'after'
+    }
+
+    def _init_sound(self):
+        """Initializes sound support"""
+        try:
+            self.use_old_sounds = bool(int(hexchat.get_pluginpref("python_alerts_use_old_sounds")))
+        except Exception:
+            self.use_old_sounds = False
+
+        if os.name == "nt":
+            paths = [
+                "%APPDATA%\\Hexchat\\Sounds", "%ProgramFiles%/Hexchat/Sounds", "%ProgramFiles(x86)%/Hexchat/Sounds"
+            ]
+        elif os.name == "posix":
+            paths = [
+                "~/.config/hexchat/sounds", "/sbin/HexChat/share/sounds", "/usr/sbin/HexChat/share/sounds",
+                "/usr/local/bin/HexChat/share/sounds",
+            ]
+        else:
+            paths = []
+        self.sound_search_path = list(os.path.expandvars(os.path.expanduser(path)) for path in paths)
+
+    def __init__(self):
+        self.sound_search_path = None
+        self._init_sound()
+        self.alerts = AlertDict()
+        self.ignore_messages = False  # Prevents us from triggering our own events.
+
+    def playsound(self, filename):
+        """
+        Plays a sound.
+
+        The default implementation uses hexchat's /splay command.
+
+        Bugs: Won't handle filenames with quotes in them, but not much does.  Blame Hexchat.
+        """
+        hexchat.command("splay \"{}\"".format(filename))
+
+    def save(self):
+        """Save alerts data"""
+        data = list(alert.export_dict() for alert in self.alerts.values())
+        hexchat.set_pluginpref("python_alerts_saved", json.dumps(data))
+
+    def load(self):
+        """Load alerts data"""
+        data = hexchat.get_pluginpref("python_alerts_saved")
+        if data is None:
+            return
+        try:
+            result = json.loads(data)
+        except Exception as ex:
+            print("Failed to load alerts:", str(ex))
+            return False
+
+        if not isinstance(result, list):
+            result = [result]
+
+        self.alerts.clear()
+
+        for ix, data in enumerate(result):
+            try:
+                alert = Alert.import_dict(data)
+            except Exception as ex:
+                print("Failed to load entry {}:".format(ix), str(ex))
+                ok = False
+                continue
+            if alert.name in plugin.alerts:
+                print("Failed to load entry {}: Alert '{}' duplicated in save data.".format(ix, alert.name))
+                ok = False
+                continue
+            plugin.alerts.append(alert)
+
+
+class Pattern:
+    # Used by regexify to find sequences of normal characters, followed by sequences of wildcard characters
+    _wildcard_regexp = re.compile(r'([^*?+]*)([*?+]*)')
+
+    def regexify(self, string, wcpattern="."):
+        """
+        Takes a wildcarded string and converts it to a regular expression
+
+        :param string: Wildcarded string
+        :param wcpattern: When wildcards appear in a string, they match the specified number of occurances of this
+            regular expression.  Must be wrapped in parenthesis if appending * or + would not cause the entire pattern
+            to repeat.
+        :return: Escaped regular expression string
+        """
+        # Fast return cases
+        if not string:
+            string = "*"
+        if string in ("*", "+"):
+            return wcpattern + string
+        if string == "?":
+            return wcpattern
+
+        # Split string into normal and wildcard portions, build a regex.
+        result = []
+        for match in self._wildcard_regexp.finditer(string):
+            normal, wild = match.groups()
+            if normal:
+                result.append(re.escape(normal))
+            if not wild:
+                continue
+
+            result.append(wcpattern)  # Pattern to match.
+            # Count how many of each wildcard character occured
+            ct = wild.count("+")
+            unbounded = ct or ("*" in wild)
+            ct += wild.count("?")
+
+            if ct < 2:
+                if unbounded:
+                    result.append("+" if ct else "*")
+                # Other case is "match exactly one", so just continue.
+                continue
+            wc = "{" + str(ct)
+            if unbounded:
+                wc += ","
+            wc += "}"
+            result.append(wc)
+        return "".join(result)
+
+
+class UserPattern(Pattern):
     """
-    Plays a sound.
+    Represents a pattern that might match a nick!user@host pattern.  Works by compiling patterns into a regex
 
-    The default implementation uses hexchat's /splay command.
+    Wildcards are permitted in patterns:
+        * matches any number of characters
+        + matches one or more characters.
+        ? matches exactly one character
 
-    Bugs: Won't handle filenames with quotes in them, but not much does.  Blame Hexchat.
+    For simplicity, pattern formats need not include a full hostmask.  Those that are not will be converted as follows:
+
+    nickname            => nickname!*@*
+    user@host           => *!user@host
+    nickname!user@host  => as is
+
+    If a pattern would include an empty component, it is replaced by a * wildcard:
+
+    nickname!@host      => nickname!*@host
+    !user@host          => *!user@host
+    @host               => *!*@host
     """
-    hexchat.command("splay \"{}\"".format(filename))
+
+    # Regex to split nick!user@host and other formats into components.
+    _split_regexp = re.compile(
+        r"""
+        (?x)
+        ^(?:
+            # Match bare nicknames and empty strings
+            (?:(?P<barenick>[^!@]*))
+            | # Or match [nick!]user@host or some portion thereof.
+            (?:
+                (?:(?P<nick>[^!@]*)(?=!))?
+                (?:!?(?P<user>[^!@]*)(?=$|@))?
+                (?:@?(?P<host>[^!@]*))?
+            )
+        )$
+        """
+    )
+
+    def __init__(self, pattern):
+        self.pattern = pattern
+        result = self._split_regexp.fullmatch(pattern)
+        if not result:
+            raise ValueError("Invalid user pattern {!r}".format(pattern))
+        result = result.groupdict(None)
+
+        self.nick = result['barenick'] or result['nick'] or '*'
+        self.user = result['user'] or '*'
+        self.host = result['host'] or '*'
+
+        # Create regex
+        regex = r'^\{nick}!\{user}!@{host}$'.format(
+            nick=self.regexify(self.nick),
+            user=self.regexify(self.user),
+            host=self.regexify(self.host)
+        )
+
+        # Successively seek out unneccessary wildcards and remove them if they exist as an optimization.
+        # This should improve performance since we'll be matching against a lot of incoming text.
+        # Some benchmarking also shows that it's faster to use re.search/re.match/re.fullmatch flavors than things like
+        # ^.*[...]
+        for chunk in ".*$", ".*@", ".*!":
+            if not regex.endswith(chunk):
+                break
+            regex = regex[:-len(chunk)]
+        for chunk in "^.*", "!.*", "@.*":
+            if not regex.startswith(chunk):
+                break
+            regex = regex[:len(chunk)]
+
+        # If the entire pattern was empty, regex will be "^".  Special-case this.
+        if regex == "^":
+            regex = ""
+
+        method = None
+        if regex:
+            if regex[0] == "^":
+                # Pattern anchored at start.  We can ditch the anchor because match() already is anchored.
+                if regex[-1] == "$":  # Also anchored at end, use fullmatch
+                    method = "fullmatch"
+                    regex = regex[1:-1]
+                else:
+                    method = "match"
+                    regex = regex[1:]
+            else:
+                # Pattern not anchored at start.  Use search
+                method = "search"
+        self.regex = regex
+        self.compiled = re.compile(regex)
+        if method:
+            self._match = getattr(self.compiled, method)
+        else:  # Match -always- succeeds on an empty regex
+            self._match = lambda unused: True
+
+    def match(self, nickuserhost):
+        return self._match(nickuserhost)
 
 
-sound_search_path = []
-try:
-    use_old_sounds = bool(int(hexchat.get_pluginpref("python_alerts_use_old_sounds")))
-except Exception:
-    use_old_sounds = False
-
-if os.name == "nt":
-    sound_search_path = [
-        "%APPDATA%\\Hexchat\\Sounds", "%ProgramFiles%/Hexchat/Sounds", "%ProgramFiles(x86)%/Hexchat/Sounds"
-    ]
-elif os.name == "posix":
-    sound_search_path = [
-        "~/.config/hexchat/sounds", "/sbin/HexChat/share/sounds", "/usr/sbin/HexChat/share/sounds",
-        "/usr/local/bin/HexChat/share/sounds",
-    ]
-
-sound_search_path = list(os.path.expandvars(os.path.expanduser(path)) for path in sound_search_path)
-
-
-class IRC(object):
+class IRC:
     BOLD = '\002'
     ITALIC = '\035'
     UNDERLINE = '\037'
@@ -305,6 +506,7 @@ class Context:
     def current(cls):
         return cls._make(hexchat.get_context())
 
+    # noinspection PyShadowingBuiltins
     @classmethod
     def find(cls, server=None, channel=None, id=None):
         if id is None:
@@ -334,7 +536,7 @@ class Context:
         return self._id
 
 
-# noinspection PyProtectedMember
+# noinspection PyProtectedMember,PyShadowingBuiltins
 class AlertDict(collections.abc.MutableMapping):
     _head = None
     _tail = None
@@ -596,7 +798,9 @@ class Alert(object):
     abs_sound = None
 
     wrap_line = None
+    format_line = ""
     wrap_match = None
+    format_match = ""
     replacement = None
 
     enabled = True
@@ -682,8 +886,18 @@ class Alert(object):
         if self.color is not None and self.color != self.linecolor:
             mp += IRC.color(self.color)
 
-        self.wrap_line = (lp, ls) if lp else None
-        self.wrap_match = (mp, ms) if mp else None
+        if lp:
+            self.wrap_line = (lp, ls)
+            self.format_line = (lp + "{}" + ls).format
+        else:
+            self.wrap_line = None
+            self.format_line = lambda x: x  # Identity throwaway
+
+        if mp:
+            self.wrap_match = (mp, ms)
+            self.format_match = (mp + "{}" + ms).format
+        else:
+            self.wrap_match = self.format_match = None
 
     def update(self):
         if self.color == self.NONECOLORTUPLE:
@@ -700,68 +914,65 @@ class Alert(object):
             self.regex = re.compile(t, flags=re.IGNORECASE)
 
         # Build the substitution string for match wrapping
-        if self.wrap_match:
+        if self.format_match:
             index = 0  # if self.regex.groups else 0
-            self.replacement = lambda x, _w=self.wrap_match, _i=index: _w[0] + x.group(_i) + _w[1]
+            self.replacement = lambda x, _f=self.format_match, _i=index: _f(x.group(_i))
         else:
             self.replacement = None
 
-    def handle(self, channel, event, words, current, focused, nickname, is_channel):
-        if len(words) < 2:  # Blank ACTIONs can cause this.
-            return False
+    def handle(self, event):
         if not self.enabled:  # Skip disabled events
             return False
         if self.pattern is None:  # Strip formatting to test regexes
-            words[1] = hexchat.strip(words[1], -1)
-        if not self.regex.search(words[1]):  # Skip non-matching events
+            message = event.stripped_message
+        else:
+            message = event.message
+        if not self.regex.search(message):  # Skip non-matching events
             return False
-
-        is_pm = not is_channel
-
         if self.strip and self.pattern is not None:
-            words[1] = hexchat.strip(words[1], -1, self.strip)
-        if self.replacement is not None:
-            words[1] = self.regex.sub(self.replacement, words[1])
-        if self.wrap_line is not None:
-            words[1] = self.wrap_line[0] + words[1] + self.wrap_line[1]
-            words[0] = self.wrap_line[0] + words[0] + self.wrap_line[1]
+            message = event.strip_message(self.strip)
 
-        hexchat.emit_print(event, *words)
+        if self.replacement is not None:
+            message = self.regex.sub(self.replacement, message)
+        nick = self.format_line(event.rawnick)
+        message = self.format_line(message)
+
+        hexchat.emit_print(event.event, nick, message, *event.words[2:])
 
         if self.abs_sound is not None and not self.mute:
-            playsound(self.abs_sound)
+            plugin.playsound(self.abs_sound)
 
         if self.copy:
             copy_to = '>>alerts<<' if self.copy is True else self.copy
-            copy_context = Context.find(current.network, copy_to, current.id)
+            copy_context = Context.find(event.current.network, copy_to, event.current.id)
             if not copy_context:
-                current.command("QUERY -nofocus " + copy_to)
-                copy_context = Context.find(current.network, copy_to, current.id)
+                event.current.command("QUERY -nofocus " + copy_to)
+                copy_context = Context.find(event.current.network, copy_to, event.current.id)
             if not copy_context:
                 print(IRC.bold("** Unable to open/create query window **"))
             else:
-                if is_pm:
-                    name = nickname + ":(PM)"
+                if event.is_channel:
+                    name = nick + ":" + event.channel
                 else:
-                    name = nickname + ":" + channel
-                copy_context.emit_print("Channel Message", name, words[1])
+                    name = nick + ":(PM)"
+                copy_context.emit_print("Channel Message", name, message)
 
-        if focused != current:
-            if self.focus and (self.focus is self.FORCE or not focused.inputbox):
-                current.command("GUI FOCUS")
+        if event.focused != event.current:
+            if self.focus and (self.focus is self.FORCE or not event.focused.inputbox):
+                event.current.command("GUI FOCUS")
             elif self.notify:
-                if current.network == focused.network:
+                if event.current.network == event.focused.network:
                     network = ""
                 else:
-                    network = "/" + focused.network
-
-                if is_pm:
-                    prefix = "[PM from {nickname}{network}]: ".format(nickname=nickname, network=network)
+                    network = "/" + event.focused.network
+                if event.is_channel:
+                    fmt = "[{nick} on {channel}{network}: {message}]"
                 else:
-                    prefix = "[{nickname} on {channel}{network}]: ".format(
-                        nickname=nickname, channel=channel, network=network
+                    fmt = "[PM from {nick}{network}: {message}]"
+                event.focused.print(
+                    fmt.format(
+                        nick=event.nick, channel=event.channel, network=network, message=message)
                     )
-                focused.print(prefix + words[1])
 
         if self.flash:
             hexchat.command("GUI FLASH")
@@ -788,7 +999,7 @@ class Alert(object):
                 self.abs_sound = None
             return
 
-        for path in sound_search_path:
+        for path in plugin.sound_search_path:
             fn = os.path.join(path, self._sound)
             if os.path.exists(fn):
                 self.abs_sound = fn
@@ -877,28 +1088,182 @@ class Alert(object):
         return cls.import_dict(json.loads(s))
 
 
-_ignore_messages = False
+class LazyProperty(property):
+    """
+    Creates a lazily-evaluated property.
+
+    Lazy properties work as follows:
+    GET:
+      - The first 'get' calls the fget function.  If this function does not raise, the value it returns is stored and
+        is returned on all subsequent accesses.
+      - Subsequent accesses return the cached value
+    SET:
+      - Calls the property setter as normal.  If autoset is True, a default setter is constructed that updates the
+        cached value.
+    DEL:
+      - Invalidates the cache, such that the next access will use the normal get() function again.
+
+    Cached property values are stored on the object using the same name as the property, except prefixed by an
+    an underscore.  Change cache_name to override this.
+
+
+    """
+    def __init__(self, fget=None, fset=None, fdel=None, doc=None, *, name=None, cache_name=None, autoset=False):
+        """
+        Constructs a new LazyProperty
+
+        :param fget: Getter implementation.  If None, returns a decorator.
+        :param fset: Setter implementation.  If None, the property is read-only (unless autoset is True)
+        :param fdel: Deleter implementation.  The default deleter invalidates the property.
+        :param doc: Docstring
+        :param name: Property name.  Will be the name of one of the getter/setter/deleter functions if available.
+        :param cache_name: Cache attribute name.  Defaults to `"_" + name`
+        :param autoset: If True, a default setter will be constructed
+        """
+        if name is None:
+            for fn in fget, fset, fdel:
+                try:
+                    name = fn.__name__
+                    break
+                except AttributeError:
+                    continue
+        if cache_name is None:
+            if name is None:
+                raise ValueError("Must specify `name`, `cache_name`, or function that has a name.")
+            cache_name = "_" + name
+
+        self.name = name or fget.__name__
+        self.cache_name = cache_name
+        self.autoset = autoset
+        super().__init__(fget, fset, fdel, doc)
+
+    def _clone(self, **overrides):
+        overrides.setdefault('doc', self.__doc__)
+        for attr in 'fget', 'fset', 'fdel', 'name', 'cache_name', 'autoset':
+            overrides.setdefault(attr, getattr(self, attr))
+        return type(self)(**overrides)
+
+    def getter(self, fget):
+        return self._clone(fget=fget)
+
+    def setter(self, fset):
+        return self._clone(fset=fset)
+
+    def deleter(self, fdel):
+        return self._clone(fdel=fdel)
+
+    def __get__(self, instance, owner):
+        if not hasattr(instance, self.cache_name):
+            setattr(instance, self.cache_name, super().__get__(instance, owner))
+        return getattr(instance, self.cache_name)
+
+    def __set__(self, instance, value):
+        if self.autoset:
+            setattr(instance, self.cache_name, value)
+        else:
+            return self.__set__(instance, value)
+
+    def __delete__(self, instance):
+        if self.fdel:
+            return super().__delete__(instance)
+        try:
+            delattr(instance, self.cache_name)
+        except AttributeError:
+            pass
+
+
+class Event:
+    """
+    Event wrapper
+
+    :ivar words: List of "words" as defined by Hexchat
+    :ivar word_eol: As above, but each entry continues to the end of the line
+    :ivar event: The event name as passed by HexChat
+    :ivar current: The event context.
+    :ivar focused: The focused context.
+    """
+    def __init__(self, words, word_eol, event):
+        self.words = words
+        self.word_eol = word_eol
+        self.event = event
+        self.current = Context.current()
+        self.focused = Context.focused()
+
+
+class CommandEvent(Event):
+    def __init__(self, words, word_eol, event="command"):
+        self.command = words[1].lower()
+        self.fn = Plugin.commands.get(self.command)
+        super().__init__(words[2:], word_eol[2:], event)
+
+    def call(self):
+        self.fn(self)
+
+
+class ChatEvent(Event):
+    """
+    Subclass of Event for handling messages from various nicknames.
+
+    :ivar words: List of "words" as defined by Hexchat
+    :ivar word_eol: As above, but each entry continues to the end of the line
+    :ivar event: The event name as passed by HexChat
+    :ivar context: The event context.
+    :ivar focused: The focused context.
+    """
+    def __init__(self, words, word_eol, event):
+        self.rawnick = words[0]
+        self.message = words[1]
+        self.modes = words[2] if len(words) > 2 else None
+        self._stripped_message_cache = {}
+        self.is_channel = event.lower().startswith("channel")
+        super().__init__(words[1:], word_eol[:1], event)
+
+    @LazyProperty
+    def hostmask(self):
+        if self.is_channel:
+            try:
+                return next(iter(user for user in self.current.get_list('users') if user.nick == self.nickname))
+            except StopIteration:
+                raise ValueError("Could not find associated user in user list.")
+        else:
+            return self.current.get_info('topic')
+
+    @LazyProperty
+    def fullnick(self):
+        return self.nick + "!" + self.hostmask
+
+    @LazyProperty
+    def nick(self):
+        return hexchat.strip(self.rawnick)
+
+    @LazyProperty
+    def stripped_message(self):
+        return self.strip_message()
+
+    @LazyProperty
+    def channel(self):
+        return self.current.get_info('channel')
+
+    def strip_message(self, flags=3):
+        """hexchat.strip(), but caching"""
+        if flags not in self._stripped_message_cache:
+            self._stripped_message_cache[flags] = hexchat.strip(self.message, -1, flags)
+        return self._stripped_message_cache[flags]
 
 
 def message_hook(words, word_eol, event):
-    global _ignore_messages
-    if not _ignore_messages:
+    if len(words) < 2:
+        return  # Blank ACTIONs can cause this, just silently discard them.
+    if not plugin.ignore_messages:
         try:
-            _ignore_messages = True
-            current = Context.current()
-            attrs = {
-                'current': current,
-                'focused': Context.focused(),
-                'channel': current.channel,
-                'is_channel': event.lower().startswith("channel"),
-                'nickname': words[0],
-            }
+            plugin.ignore_messages = True
+            event = ChatEvent(words, word_eol, event)
 
-            for alert in alerts.values():
-                if alert.handle(event=event, words=words, **attrs):
+            for alert in plugin.alerts.values():
+                if alert.handle(event):
                     return hexchat.EAT_ALL
         finally:
-            _ignore_messages = False
+            plugin.ignore_messages = False
     return None
 
 
@@ -906,34 +1271,6 @@ class InvalidCommandException(Exception):
     def __init__(self, message=None):
         self.message = message
         super().__init__()
-
-COMMANDS = OrderedDict()
-
-
-def get_num_args(fn):
-    """
-    Returns a tuple of the minimum and maximum number of positional arguments to fn.
-    """
-    if hasattr(inspect, 'signature'):
-        min_count = 0
-        max_count = 0
-        sig = inspect.signature(fn)
-        for param in sig.parameters.values():
-            if param.kind in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD):
-                if max_count is not None:
-                    max_count += 1
-                if param.default is param.empty:
-                    min_count += 1
-            if param.kind == param.VAR_POSITIONAL:
-                max_count = None
-        return min_count, max_count
-
-    spec = inspect.getfullargspec(fn)
-    max_count = len(spec.args)
-    min_count = max_count - len(spec.defaults)
-    if spec.varargs is not None:
-        max_count = None
-        return min_count, max_count
 
 
 def command(name, collect=False, help="", requires_alert=False, raw=False):
@@ -944,84 +1281,136 @@ def command(name, collect=False, help="", requires_alert=False, raw=False):
     :param collect: If True, the final argument uses word_eol instead of word
     :param help: Help text shown if command throws InvalidCommandException.
     :param requires_alert: If True, the first argument of the command is an alert rather than the name of an alert.
-    :param raw: If True, parameter parsing beyond what requires_alert requires is not performed, words and word_eol are
-        passed mostly as-is.
+    :param raw: If True, parameter parsing beyond what requires_alert requires is not performed.  The function receives
+        the event and a parsed alert (if any)
     :return:
     """
+
+    def get_num_args(fn):
+        """
+        Returns a tuple of the minimum and maximum number of positional arguments to fn.
+        """
+        if hasattr(inspect, 'signature'):
+            min_count = 0
+            max_count = 0
+            sig = inspect.signature(fn)
+            for param in sig.parameters.values():
+                if param.kind in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD):
+                    if max_count is not None:
+                        max_count += 1
+                    if param.default is param.empty:
+                        min_count += 1
+                if param.kind == param.VAR_POSITIONAL:
+                    max_count = None
+            return min_count, max_count
+
+        spec = inspect.getfullargspec(fn)
+        max_count = len(spec.args)
+        min_count = max_count - len(spec.defaults)
+        if spec.varargs is not None:
+            max_count = None
+            return min_count, max_count
+
     def decorator(fn, *a, **kw):
         if not raw:
             min_args, max_args = get_num_args(fn)
 
         @functools.wraps(fn)
-        def wrapper(words, word_eol):
+        def wrapper(event):
             try:
-                if not raw:
-                    if len(words) < min_args:
+                ct = len(event.words) + 1  # Fakery, because we'll always add an event argument
+                if raw:
+                    args = []
+                    if requires_alert and event.words:
+                        args.append(event.words[0])
+                else:
+                    args = None
+                    if ct < min_args:
                         raise InvalidCommandException("Incorrect number of arguments")
                     if max_args is not None:
-                        if collect and len(words) >= max_args:
-                            words[max_args - 1] = word_eol[max_args - 1]
-                            words = words[0:max_args]
-                        elif max_args < len(words):
+                        if collect and ct >= max_args:
+                            args = list(event.words[:max_args - 1])
+                            args.append(event.word_eol[max_args - 1])
+                        elif max_args < ct:
                             raise InvalidCommandException("Incorrect number of arguments")
+                    if args is None:
+                        args = list(event.words)
 
                 if requires_alert:
-                    if not len(words):
+                    if not args:
                         raise InvalidCommandException("Incorrect number of arguments")
-                    alert = alerts.get(words[0])
+                    alert = plugin.alerts.get(args[0])
                     if alert is None:
-                        print("Alert '{}' not found.".format(words[0]))
+                        print("Alert '{}' not found.".format(args[0]))
                         return False
+                    args[0] = alert
 
-                    if raw:
-                        return fn(alert, words[1:], word_eol[1:])
-                    words[0] = alert
-
-                if raw:
-                    return fn(words, word_eol)
-
-                return fn(*words)
-
+                return fn(event, *args)
             except InvalidCommandException as ex:
                 if ex.message:
                     print(ex.message)
                 print("Usage: /alerts {} {}".format(name, help))
                 return False
 
-        COMMANDS[name] = wrapper
+        Plugin.commands[name] = wrapper
         return fn
     return decorator
 alert_command = functools.partial(command, requires_alert=True)
 
 
 def multi_command(fn):
-    def wrapper(*names, **kwargs):
+    def wrapper(event, *names, **kwargs):
         keys = list(name.strip().lower() for name in names)
         is_all = 'all' in keys
 
         if is_all:
-            return fn(alerts, is_all=True, original=names, **kwargs)
+            return fn(plugin.alerts, plugin.alerts, is_all=True, original=names, **kwargs)
 
         items = OrderedDict()
         for key, name in zip(keys, names):
             if key in items:
                 continue
-            alert = alerts.get(key)
+            alert = plugin.alerts.get(key)
             if alert is None:
                 print("Alert '{}' not found.".format(name))
                 continue
             items[key] = alert
 
-        return fn(items, is_all=False, original=names, **kwargs)
+        return fn(event, items, is_all=False, original=names, **kwargs)
     return wrapper
 
 
+@command("add", help="<alert>: Add an alert named <alert>")
+def cmd_add(event, name):
+    if name in plugin.alerts:
+        print("Alert '{}' already exists.".format(name))
+        return False
+
+    plugin.alerts.append(Alert(name))
+    print("Alert '{}' added.".format(name))
+    return True
+
+
+@command("delete", help="<alerts...>|ALL: Delete selected alerts (separated by spaces), or delete all alerts.")
+@multi_command
+def cmd_delete(event, items, is_all=None, **unused):
+    if is_all:
+        print("Deleted {} alert(s)".format(len(plugin.alerts)))
+        plugin.alerts.clear()
+        return
+    if not items:
+        raise InvalidCommandException()
+    for key, alert in items.items():
+        print("Deleted alert '{}'.".format(alert.name))
+        del plugin.alerts[key]
+
+
 @alert_command("rename", help="<alert> <newname>: Rename an alert.  (Does not change what the alert matches.")
-def cmd_rename(alert, newname):
+def cmd_rename(event, alert, newname):
     if newname == alert:
         print("Well, that was easy.")
         return
-    if newname in alerts:
+    if newname in plugin.alerts:
         print("There's already an alert named '{}'".format(newname))
         return
     oldname = alert.name
@@ -1029,25 +1418,17 @@ def cmd_rename(alert, newname):
     print("Alert '{}' renamed to '{}'".format(oldname, newname))
 
 
-DIRECTION_SYNONYMS = {
-    'first': 'first', 'front': 'first', 'begin': 'first', 'beginning': 'first',
-    'last': 'last', 'end': 'last', 'back': 'last',
-    'before': 'before',
-    'after': 'after'
-}
-
-
 @alert_command("move", help="<alert> {FIRST|LAST|BEFORE <targetname>|AFTER <targetname>: Rearrange the list of alerts.")
-def cmd_move(alert, direction, targetname=None):
+def cmd_move(event, alert, direction, targetname=None):
     direction = direction.lower()
-    if direction not in DIRECTION_SYNONYMS:
+    if direction not in Plugin.DIRECTION_SYNONYMS:
         raise InvalidCommandException("Invalid direction.")
-    direction = DIRECTION_SYNONYMS[direction]
+    direction = Plugin.DIRECTION_SYNONYMS[direction]
 
     if targetname is not None:
         if direction in ('first', 'last'):
             raise InvalidCommandException("This form of /alert move does not use a targetname.")
-        target = alerts.get(targetname)
+        target = plugin.alerts.get(targetname)
         if not target:
             print("Target alert '{}' does not exist.".format(targetname))
             return
@@ -1060,47 +1441,22 @@ def cmd_move(alert, direction, targetname=None):
         target = None
 
     if direction == 'first':
-        alerts.moveafter(alert, None)
+        plugin.alerts.moveafter(alert, None)
         print("Alert '{}' moved to the beginning of the list.".format(alert.name))
         return
     if direction == 'last':
-        alerts.movebefore(alert, None)
+        plugin.alerts.movebefore(alert, None)
         print("Alert '{}' moved to the end of the list.".format(alert.name))
         return
     if direction == 'before':
-        alerts.movebefore(alert, target)
+        plugin.alerts.movebefore(alert, target)
         print("Alert '{}' moved to be before '{}'".format(alert.name, target.name))
         return
     if direction == 'after':
-        alerts.moveafter(alert, target)
+        plugin.alerts.moveafter(alert, target)
         print("Alert '{}' moved to be after'{}'".format(alert.name, target.name))
         return
     raise ValueError("Reached code that should be unreachable.  Please report this as a bug.")
-
-
-@command("add", help="<alert>: Add an alert named <alert>")
-def cmd_add(name):
-    if name in alerts:
-        print("Alert '{}' already exists.".format(name))
-        return False
-
-    alerts.append(Alert(name))
-    print("Alert '{}' added.".format(name))
-    return True
-
-
-@command("delete", help="<alerts...>|ALL: Delete selected alerts (separated by spaces), or delete all alerts.")
-@multi_command
-def cmd_delete(items, is_all=None, **unused):
-    if is_all:
-        print("Deleted {} alert(s)".format(len(alerts)))
-        alerts.clear()
-        return
-    if not items:
-        raise InvalidCommandException()
-    for key, alert in items.items():
-        print("Deleted alert '{}'.".format(alert.name))
-        del alerts[key]
 
 
 # noinspection PyDefaultArgument
@@ -1122,7 +1478,7 @@ def parse_format(s, alternates=None):
     return parse_bool(s)
 
 
-def cmd_setshow_tristate(alert, setting, value=None):
+def cmd_setshow_tristate(event, alert, setting, value=None):
     isset = value is not None
     text, obj = alert.TRISTATE_ATTRIBUTES[setting]
     if isset:
@@ -1145,7 +1501,7 @@ def cmd_setshow_tristate(alert, setting, value=None):
     return True
 
 
-def cmd_setshow_boolean(alert, setting, value=None):
+def cmd_setshow_boolean(event, alert, setting, value=None):
     isset = value is not None
     if isset:
         try:
@@ -1160,7 +1516,7 @@ def cmd_setshow_boolean(alert, setting, value=None):
     return True
 
 
-def cmd_setshow_copy(alert, value=None):
+def cmd_setshow_copy(event, alert, value=None):
     isset = value is not None
     if isset:
         try:
@@ -1178,7 +1534,7 @@ def cmd_setshow_copy(alert, value=None):
         alert.print("copy {action} off".format(action='set to' if isset else 'is'))
 
 
-def cmd_setshow_color(alert, setting, value=None):
+def cmd_setshow_color(event, alert, setting, value=None):
     isset = value is not None
     if isset:
         if value.strip().lower() in ('off', 'f', 'false', 'none'):
@@ -1213,7 +1569,7 @@ def cmd_setshow_color(alert, setting, value=None):
 
 
 @alert_command("pattern", collect=True)
-def cmd_setshow_pattern(alert, value=None):
+def cmd_setshow_pattern(event, alert, value=None):
     isset = value is not None
     if isset:
         alert.pattern = value
@@ -1229,7 +1585,7 @@ def cmd_setshow_pattern(alert, value=None):
 
 
 @alert_command("regex", collect=True)
-def cmd_setshow_regex(alert, value=None):
+def cmd_setshow_regex(event, alert, value=None):
     isset = value is not None
     if isset:
         try:
@@ -1246,7 +1602,7 @@ def cmd_setshow_regex(alert, value=None):
     if alert.pattern is None:
         alert.print(
             "Regex {action} '{value}'"
-            .format(value=regex.pattern, action='set to' if isset else 'is')
+            .format(value=alert.regex.pattern, action='set to' if isset else 'is')
         )
     else:
         alert.print("Regex is '{}' (derived from pattern: '{}')".format(alert.regex.pattern, alert.pattern))
@@ -1254,7 +1610,7 @@ def cmd_setshow_regex(alert, value=None):
 
 
 @alert_command("sound", collect=True)
-def cmd_setshow_sound(alert, value=None):
+def cmd_setshow_sound(event, alert, value=None):
     isset = value is not None
     if isset:
         if value.strip().lower() in ('off', 'f', 'false', 'none'):
@@ -1287,41 +1643,42 @@ def cmd_setshow_sound(alert, value=None):
         " [<value>]: Change alert settings."
     )
 )
-def cmd_set(alert, words, word_eol):
-    for ix in range(0, len(words), 2):
+def cmd_set(event, alert):
+    words = event.words
+    for ix in range(1, len(words), 2):
         setting = words[ix]
         if ix+1 < len(words):
             value = words[ix+1]
-            value_eol = word_eol[ix+1]
+            value_eol = event.word_eol[ix+1]
         else:
             value, value_eol = None, None
         if setting in alert.TRISTATE_ATTRIBUTES:
-            cmd_setshow_tristate(alert, setting, value)
+            cmd_setshow_tristate(event, alert, setting, value)
             continue
         if setting in alert.BOOLEAN_ATTRIBUTES:
-            cmd_setshow_boolean(alert, setting, value)
+            cmd_setshow_boolean(event, alert, setting, value)
             continue
         if setting in alert.COLOR_ATTRIBUTES:
-            cmd_setshow_color(alert, setting, value)
+            cmd_setshow_color(event, alert, setting, value)
             continue
         if setting == 'copy':
-            cmd_setshow_copy(alert, value)
+            cmd_setshow_copy(event, alert, value)
             continue
         if setting == 'pattern':
-            cmd_setshow_pattern(alert, value_eol)
+            cmd_setshow_pattern(event, alert, value_eol)
             break
         if setting == 'regex':
-            cmd_setshow_regex(alert, value_eol)
+            cmd_setshow_regex(event, alert, value_eol)
             break
         if setting == 'sound':
-            cmd_setshow_sound(alert, value_eol)
+            cmd_setshow_sound(event, alert, value_eol)
             break
         raise InvalidCommandException("Unknown setting '{}'.".format(setting))
     alert.update()
 
 
 @alert_command("show")
-def cmd_show(alert, *show):
+def cmd_show(event, alert, *show):
     show = list(setting.strip().lower() for setting in show)
     if 'all' in show or not show:
         show = list(
@@ -1333,25 +1690,25 @@ def cmd_show(alert, *show):
 
     for setting in show:
         if setting in alert.TRISTATE_ATTRIBUTES:
-            cmd_setshow_tristate(alert, setting)
+            cmd_setshow_tristate(event, alert, setting)
         elif setting in alert.BOOLEAN_ATTRIBUTES:
-            cmd_setshow_boolean(alert, setting)
+            cmd_setshow_boolean(event, alert, setting)
         elif setting in alert.COLOR_ATTRIBUTES:
-            cmd_setshow_color(alert, setting)
+            cmd_setshow_color(event, alert, setting)
         elif setting == 'copy':
-            cmd_setshow_copy(alert)
+            cmd_setshow_copy(event, alert)
         elif setting == 'pattern':
-            cmd_setshow_pattern(alert)
+            cmd_setshow_pattern(event, alert)
         elif setting == 'regex':
-            cmd_setshow_regex(alert)
+            cmd_setshow_regex(event, alert)
         elif setting == 'sound':
-            cmd_setshow_sound(alert)
+            cmd_setshow_sound(event, alert)
         else:
             print("Unknown setting '{}'.".format(setting))
 
 
 @multi_command
-def cmd_multi_bool(items, is_all=None, attr='enabled', changeto=True, state='enabled', **unused):
+def cmd_multi_bool(event, items, is_all=None, attr='enabled', changeto=True, state='enabled', **unused):
     ustate = state.capitalize()
 
     if not items:
@@ -1382,8 +1739,8 @@ cmd_unmute = functools.partial(cmd_multi_bool, attr='mute', state='unmuted', cha
 
 command('enable', help="<name>|ALL: Enable selected alert(s)")(cmd_enable)
 command('disable', help="<name>|ALL: Disable selected alert(s)")(cmd_disable)
-COMMANDS['on'] = COMMANDS['enable']
-COMMANDS['off'] = COMMANDS['disable']
+Plugin.commands['on'] = Plugin.commands['enable']
+Plugin.commands['off'] = Plugin.commands['disable']
 
 command('mute', help="<name>|ALL: Mute selected alert(s)")(cmd_mute)
 command('unmute', help="<name>|ALL: Unmute selected alert(s)")(cmd_unmute)
@@ -1391,7 +1748,7 @@ command('unmute', help="<name>|ALL: Unmute selected alert(s)")(cmd_unmute)
 
 @command("preview")
 @multi_command
-def cmd_preview(items, is_all=None, original=None, **unused):
+def cmd_preview(event, items, is_all=None, original=None, **unused):
     sound = (not is_all) and len(original) == 1
     if is_all and not items:
         print("No alerts are currently defined.")
@@ -1407,16 +1764,16 @@ def cmd_preview(items, is_all=None, original=None, **unused):
         alert.print(outer)
 
         if sound and alert.abs_sound:
-            playsound(alert.abs_sound)
+            plugin.playsound(alert.abs_sound)
 
 
 @command("version")
-def cmd_version():
+def cmd_version(event):
     print("alerts.py version {}".format(__module_version__))
 
 
 @command("help", help="[<command-or-setting]>: Shows help.")
-def cmd_help(search=None):
+def cmd_help(event, search=None):
     if not search:
         print(
             "{name} version {version} - {description}"
@@ -1479,7 +1836,7 @@ def cmd_help(search=None):
 
 @command("dump", help="<name>|ALL: Dump selected alert(s) to output.")
 @multi_command
-def cmd_dump(items, is_all=None, **kwargs):
+def cmd_dump(event, items, is_all=None, **kwargs):
     if not items:
         if is_all:
             print("No alerts are currently defined.")
@@ -1533,7 +1890,7 @@ def cmd_dump(items, is_all=None, **kwargs):
 
 @command("export", help="<alerts...>|ALL: Export selected alert(s) as JSON.")
 @multi_command
-def cmd_export(items, is_all=None, **unused):
+def cmd_export(event, items, is_all=None, **unused):
     if not items:
         if is_all:
             print("No alerts are currently defined.")
@@ -1547,7 +1904,7 @@ def cmd_export(items, is_all=None, **unused):
 
 
 @command("share", help="<alerts...>: Share selected alert(s) on current IRC channel.")
-def cmd_share(*names):
+def cmd_share(event, *names):
     if not names:
         raise InvalidCommandException()
     result = OrderedDict()
@@ -1556,11 +1913,11 @@ def cmd_share(*names):
         if key == 'all':
             print("/alerts share all is not supported, as it may inadvertently flood channels.")
             return False
-        elif key not in alerts:
+        elif key not in plugin.alerts:
             print("Alert '{}' not found.".format(name))
             return False
 
-        alert = alerts[key]
+        alert = plugin.alerts[key]
         result[alert.name] = alert.export_json()
 
     for name, output in result.items():
@@ -1571,7 +1928,7 @@ def cmd_share(*names):
 
 
 @command("import", help="<json>: Import JSON data.", collect=True)
-def cmd_import(data):
+def cmd_import(event, data):
     try:
         result = json.loads(data)
     except Exception as ex:
@@ -1591,7 +1948,7 @@ def cmd_import(data):
             ok = False
             continue
         key = alert.name.lower()
-        if key in alerts:
+        if key in plugin.alerts:
             print("Failed to import entry {}: Alert '{}' already exists.".format(ix, alert.name))
             ok = False
             continue
@@ -1602,34 +1959,35 @@ def cmd_import(data):
         new_alerts[key] = alert
 
     if ok:
-        alerts.update(new_alerts)
+        plugin.alerts.update(new_alerts)
         print("Imported {} alert(s)".format(len(new_alerts)))
     else:
         print("Imported aborted, error(s) occurred.")
 
 
 @command("save", help="Forces alerts to save.")
-def cmd_save():
-    save()
-    print("{} alert(s) saved".format(len(alerts)))
+def cmd_save(event):
+    plugin.save()
+    print("{} alert(s) saved".format(len(plugin.alerts)))
 
 
 @alert_command("copy", help="<name> <newname>: Duplicates all settings of an alert to a new alert.")
-def cmd_copy(alert, new):
+def cmd_copy(event, alert, new):
     key = new.lower()
-    if key in alerts:
+    if key in plugin.alerts:
         print("Alert '{}' already exists".format(key))
 
     newalert = Alert.import_dict(alert.export_dict())
     newalert.name = new
     newalert.pattern = new
     newalert.update()
-    alerts.insertafter(newalert, alert)
+    plugin.alerts.insertafter(newalert, alert)
     newalert.print("Copied from {0.name}".format(alert))
 
 
+# noinspection PyProtectedMember
 @command("debug")
-def cmd_debug():
+def cmd_debug(event, name=None):
     def _print_alert():
         print(
             "Key: {key}, Name: {alert.name}, Prev={prev}, Next={next}".format(
@@ -1641,26 +1999,27 @@ def cmd_debug():
         )
 
     print("Alert dictionary view: ")
-    for key, alert in alerts._dict.items():
+    for key, alert in plugin.alerts._dict.items():
         _print_alert()
 
-    target_len = len(alerts._dict)
+    target_len = len(plugin.alerts._dict)
     cur_len = 0
 
     print("Alert linkedlist view: ")
     print("Head: {}, Tail: {}".format(
-        alerts._head.name if alerts._head else '<none>',
-        alerts._tail.name if alerts._head else '<none>'
+        plugin.alerts._head.name if plugin.alerts._head else '<none>',
+        plugin.alerts._tail.name if plugin.alerts._head else '<none>'
     ))
-    for key, alert in alerts.items():
+    for key, alert in plugin.alerts.items():
         cur_len += 1
         _print_alert()
         if cur_len > target_len:
             print("** Encountered more items than expected (list may be cyclical), aborting **")
             return
 
+
 @command("colors", help=": Shows a list of colors")
-def cmd_colors():
+def cmd_colors(event):
     rowsize = 16
     print("Listing all available colors:")
     for offset in range(IRC.MINCOLOR, IRC.MAXCOLOR+1, rowsize):
@@ -1681,72 +2040,32 @@ def command_hook(words, word_eol, userdata):
     if len(words) < 2:
         print("Type '/alerts help' for full usage instructions.")
         return
-    _, cmd, *words = words
-    word_eol = word_eol[2:]
-    cmd = cmd.lower()
 
-    if cmd not in COMMANDS:
+    event = CommandEvent(words, word_eol)
+    if not event.fn:
+        print("Unknown command '{}'".format(event.command))
         print("Type '/alerts help' for full usage instructions.")
-        return
-
-    fn = COMMANDS[cmd]
-    fn(words, word_eol)
+    event.call()
     return hexchat.EAT_ALL
 
 
-def save():
-    data = list(alert.export_dict() for alert in alerts.values())
-    hexchat.set_pluginpref("python_alerts_saved", json.dumps(data))
-
-
-def load():
-    alerts.clear()
-    data = hexchat.get_pluginpref("python_alerts_saved")
-    if data is None:
-        return
-    try:
-        result = json.loads(data)
-    except Exception as ex:
-        print("Failed to load alerts:", str(ex))
-        return False
-
-    if not isinstance(result, list):
-        result = [result]
-
-    for ix, data in enumerate(result):
-        try:
-            alert = Alert.import_dict(data)
-        except Exception as ex:
-            print("Failed to load entry {}:".format(ix), str(ex))
-            ok = False
-            continue
-        if alert.name in alerts:
-            print("Failed to load entry {}: Alert '{}' duplicated in save data.".format(ix, alert.name))
-            ok = False
-            continue
-        alerts.append(alert)
-
-
-
-
 def unload_hook(userdata):
-    save()
+    plugin.save()
 
 
-alerts = AlertDict()
-
+plugin = Plugin()
 print(
     ("{name} version {version} loaded.  Type " + IRC.bold("/alerts help") + " for usage instructions")
     .format(name=__module_name__, version=__module_version__)
 )
-load()
-print("{} alert(s) loaded".format(len(alerts)))
+plugin.load()
+print("{} alert(s) loaded".format(len(plugin.alerts)))
 hexchat.hook_unload(unload_hook)
 hexchat.hook_command("alerts", command_hook, help="Configures custom alerts")
 
 event_hooks = {}
-for event in (
+for event_type in (
     "Channel Msg Hilight", "Channel Message", "Channel Action",
     "Private Message", "Private Message to Dialog", "Private Action", "Private Action to Dialog"
 ):
-    event_hooks[event] = hexchat.hook_print(event, message_hook, event)
+    event_hooks[event_type] = hexchat.hook_print(event_type, message_hook, event_type)
