@@ -79,8 +79,8 @@
 
 ** Filtering **
 :filters
-    Each alert can have a nickname filter (configured with /alerts nicklist) and a channel filter (configured with
-    /alerts chanlist) configured to restrict which users and what channels can trigger the alert.
+    Each alert can have a nickname filter (configured with /alerts nicklist) and a channel filter (NOT YET IMPLEMENTED,
+    configured with /alerts chanlist) configured to restrict which users and what channels can trigger the alert.
 
     The first matching pattern in a filter determines whether the alert is allowed to trigger.  A filter looks like:
 
@@ -107,10 +107,8 @@
 /alerts chanlist <alert> EDIT|CLEAR
     The SET variants replace the current nickname filter or channel filter with the set pattern
     The EDIT variants update Hexchat's input box to contain the current filter so that it can be edited.
+    /alerts chanlist is not yet implemented.
     See /alerts help filters
-
-/alerts nicklist <alert> blah blah
-    Test test more
 
 ** Import/Export and Sharing **
 /alerts dump <alerts...>|ALL
