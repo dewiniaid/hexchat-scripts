@@ -31,6 +31,7 @@ Improved alerts for Hexchat
 * Alerts can now be moved to appear at a different position in the alert list using 
   `/alerts move <alert> {BEFORE <target>|AFTER <target>|FIRST|LAST`.  
   Since only the the first matching alert will trigger, this allows more fine-tuned control over which alert triggers.
+* Added the ability to filter alerts by nickname/hostmask (see `/ALERTS NICKLIST`).
   
      
 ### 0.5.2

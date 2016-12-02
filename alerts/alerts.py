@@ -77,6 +77,41 @@
 /alerts colors
     Shows a list of the available colors.
 
+** Filtering **
+:filters
+    Each alert can have a nickname filter (configured with /alerts nicklist) and a channel filter (configured with
+    /alerts chanlist) configured to restrict which users and what channels can trigger the alert.
+
+    The first matching pattern in a filter determines whether the alert is allowed to trigger.  A filter looks like:
+
+    ALLOW pattern,pattern2,pattern3 DENY pattern3 ALLOW pattern4
+
+    If no patterns in a filter trigger, the filter triggers if the last pattern was a DENY rule (thus allowing easy
+    expression of "Block these patterns, allow the rest"), and does not trigger if the last pattern was ALLOW (thus
+    allowing "Only allow these patterns").
+
+    Patterns support limited wildcards: * matches 0 or more characters, + 1 or more, and ? exactly 1 character.
+    Wildcards will never match "!" (separating a nickname from a username) or "@" (separating a username/channel
+    from a hostmask/server name).
+
+    Nicknames are matched against patterns by converting them to nick!user@host format, with some simplifications.
+    Empty sections are replaced with wildcards, so these all work: "nickname", "user@host", "@host", "!user"
+
+    Channels are matched against patterns by converting them to channel@server format, with simplifications similar
+    to the above.  Note that channel names include the "#", and a PM is the 'channel' of the nickname sending the PM.
+    Thus, "ALLOW #*" will only allow alerts to trigger in actual channels (not PMs), and "DENY #*" does the opposite.
+
+/alerts nicklist <alert> SET ALLOW|DENY pattern1,pattern2 ALLOW|DENY pattern3...
+/alerts nicklist <alert> EDIT|CLEAR
+/alerts chanlist <alert> SET ALLOW|DENY pattern1,pattern2 ALLOW|DENY pattern3...
+/alerts chanlist <alert> EDIT|CLEAR
+    The SET variants replace the current nickname filter or channel filter with the set pattern
+    The EDIT variants update Hexchat's input box to contain the current filter so that it can be edited.
+    See /alerts help filters
+
+/alerts nicklist <alert> blah blah
+    Test test more
+
 ** Import/Export and Sharing **
 /alerts dump <alerts...>|ALL
     Outputs the commands required to re-create the specified alert(s).
@@ -353,7 +388,7 @@ class UserPattern(Pattern):
     )
 
     def __init__(self, pattern):
-        self.pattern = pattern
+        self.text = pattern
         result = self._split_regexp.fullmatch(pattern)
         if not result:
             raise ValueError("Invalid user pattern {!r}".format(pattern))
@@ -364,7 +399,7 @@ class UserPattern(Pattern):
         self.host = result['host'] or '*'
 
         # Create regex
-        regex = r'^\{nick}!\{user}!@{host}$'.format(
+        regex = r'^{nick}!{user}@{host}$'.format(
             nick=self.regexify(self.nick),
             user=self.regexify(self.user),
             host=self.regexify(self.host)
@@ -386,6 +421,7 @@ class UserPattern(Pattern):
         # If the entire pattern was empty, regex will be "^".  Special-case this.
         if regex == "^":
             regex = ""
+        self.always_matches = (regex == "")
 
         method = None
         if regex:
@@ -401,14 +437,15 @@ class UserPattern(Pattern):
                 # Pattern not anchored at start.  Use search
                 method = "search"
         self.regex = regex
-        self.compiled = re.compile(regex)
+        self.compiled = re.compile(regex, re.IGNORECASE)
         if method:
             self._match = getattr(self.compiled, method)
         else:  # Match -always- succeeds on an empty regex
             self._match = lambda unused: True
+        self.methodname = method or '<True>'
 
     def match(self, nickuserhost):
-        return self._match(nickuserhost)
+        return bool(self._match(nickuserhost))
 
 
 class IRC:
@@ -781,41 +818,46 @@ class Alert(object):
         'n': 'notify',
         'r': 'reverse',
         'u': 'underline',
-        'w': 'word',
+        'w': 'word'
     }
 
-    word = True
-    regex = None
-
-    bold = False
-    italic = False
-    underline = False
-    reverse = False
-    color = None
-    linecolor = None
-
-    _sound = None
-    abs_sound = None
-
-    wrap_line = None
-    format_line = ""
-    wrap_match = None
-    format_match = ""
-    replacement = None
-
-    enabled = True
-    mute = False
-
-    notify = False
-    focus = False
-    flash = False
-    copy = False
-
     def __init__(self, name):
+        self.word = True
+        self.regex = None
+
+        self.bold = False
+        self.italic = False
+        self.underline = False
+        self.reverse = False
+        self.color = None
+        self.linecolor = None
+
+        self._sound = None
+        self.abs_sound = None
+
+        self.wrap_line = None
+        self.format_line = ""
+        self.wrap_match = None
+        self.format_match = ""
+        self.replacement = None
+
+        self.enabled = True
+        self.mute = False
+
+        self.notify = False
+        self.focus = False
+        self.flash = False
+        self.copy = False
+
         self._name = name
         self.strip = 0
         self.pattern = name
         self._parent = self._prev = self._next = None
+
+        # Nickname and Channel filters:
+        # Lists of (bool, filter) tuples, where the bool is True for allow, False for deny.
+        self.filters = {'nick': [], 'channel': []}
+        self.check_filter = functools.lru_cache(maxsize=128)(self._check_filter)
         self.update()
 
     @property
@@ -829,10 +871,8 @@ class Alert(object):
         else:
             self._name = value
 
-    def update_wrapper(self):
-        """
-        Recalculates correct values for wrap_line and wrap_match.
-        """
+    def _update_wrappers(self):
+        """Recalculates correct values for wrap_line and wrap_match."""
         formats = (
             (self.bold, IRC.BOLD),
             (self.italic, IRC.ITALIC),
@@ -840,10 +880,7 @@ class Alert(object):
             (self.reverse, IRC.REVERSE)
         )
         # Line prefix, line suffix, match prefix, match suffix
-        lp = ''
-        ls = ''
-        mp = ''
-        ms = ''
+        lp = ls = mp = ms = ''
 
         for enabled, s in formats:
             if not enabled:
@@ -899,12 +936,89 @@ class Alert(object):
         else:
             self.wrap_match = self.format_match = None
 
+    def invalidate_filter_cache(self):
+        self.check_filter.cache_clear()
+
+    def _check_filter(self, filterkey, string):
+        """
+        Runs the specified string against the filter identified by filterkey.  Returns TRUE if allowed, FALSE if denied.
+        """
+        allowed = False  # This causes us to return true if the filterlist is empty.
+        for allowed, pattern in self.filters[filterkey]:
+            if pattern is None or pattern.always_matches or pattern.match(string):
+                return allowed
+        return not allowed
+
+    def _dump_filter(self, filterkey):
+        return list(
+            ("+" if allowed else "-") + (pattern.text if pattern is not None else "")
+            for allowed, pattern in self.filters[filterkey]
+        ) or None
+
+    def _load_filter(self, filterkey, data, factory):
+        if not data or data[0] == "+":
+            self.filters[filterkey] = []
+            self.invalidate_filter_cache()
+            return
+
+        filt = []
+        for string in data:
+            allow = string[0] == "+"
+            text = string[1:]
+            if not text:
+                filt.append((allow, None))
+            else:
+                filt.append((allow, factory(text)))
+
+        self.invalidate_filter_cache()
+        self.filters[filterkey] = filt
+
+    def describe_filter(self, filterkey):
+        buffer = []
+        filt = self.filters[filterkey]
+        if not filt:
+            return None
+
+        previous = None
+        for allowed, pattern in filt:
+            if pattern is None:
+                previous = None
+            if allowed is not previous:
+                previous = allowed
+                buffer.append(" ALLOW " if allowed else " DENY ")
+                if pattern is None:
+                    continue
+            else:
+                buffer.append(",")
+            buffer.append(pattern.text)
+        return "".join(buffer)
+
+    def _precheck_filter(self, filterkey):
+        """
+        Returns True if the filter would immediately succeed, False if it'd immediately fail, None otherwise.
+
+        Used as a precheck before cacheing.
+        """
+        if not self.filters[filterkey]:
+            return True
+        allowed, pattern = self.filters[filterkey][0]
+        if pattern is None or pattern.always_matches:
+            return allowed
+        return None
+
+    def check_nick(self, event):
+        # Determines whether the specified nickname would match this event.
+        pre = self._precheck_filter('nick')
+        if pre is not None:
+            return pre
+        return self._check_filter('nick', event.fullnick)
+
     def update(self):
         if self.color == self.NONECOLORTUPLE:
             self.color = None
         if self.linecolor == self.NONECOLORTUPLE:
             self.linecolor = None
-        self.update_wrapper()
+        self._update_wrappers()
 
         # Build a regular expression, or maybe we already have one.
         if self.pattern:
@@ -929,6 +1043,11 @@ class Alert(object):
             message = event.message
         if not self.regex.search(message):  # Skip non-matching events
             return False
+
+        # Nickname and channel filtering
+        if not self.check_nick(event):
+            return False
+
         if self.strip and self.pattern is not None:
             message = event.strip_message(self.strip)
 
@@ -1044,6 +1163,10 @@ class Alert(object):
         if self.copy:
             rv['c'] = 'on' if self.copy is True else self.copy
 
+        rv['N'] = self._dump_filter('nick')
+        if not rv['N']:
+            del rv['N']
+
         return rv
 
     def export_json(self):
@@ -1080,6 +1203,8 @@ class Alert(object):
             rv.copy = True if d['c'] == 'on' else d['c']
         else:
             rv.copy = False
+        if 'N' in d and d['N'] is not None:
+            rv._load_filter('nick', d['N'], UserPattern)
         rv.update()
         return rv
 
@@ -1345,6 +1470,7 @@ def command(name, collect=False, help="", requires_alert=False, raw=False):
                         return False
                     args[0] = alert
 
+                # noinspection PyArgumentList
                 return fn(event, *args)
             except InvalidCommandException as ex:
                 if ex.message:
@@ -1985,9 +2111,91 @@ def cmd_copy(event, alert, new):
     newalert.print("Copied from {0.name}".format(alert))
 
 
+def cmd_filterlist(event, alert, subcommand, *stanzas, key, filtername, factory):
+    subcommand = subcommand.lower()
+
+    if subcommand == 'edit':
+        desc = alert.describe_filter(key)
+        if not desc:
+            print(
+                "No {} is configured yet for this alert.  "
+                "Add one below, or see /ALERTS HELP FILTERS and /ALERTS HELP {}"
+                .format(filtername, event.command)
+            )
+        command = "/ALERTS {command} {alert} SET{description}".format(
+            command=event.command.upper(),
+            alert=alert.name,
+            description=desc or " ALLOW "
+        )
+        if desc:
+            print("Editing {} for alert '{}'\nCurrent filter is: {}".format(filtername, alert.name, command))
+        hexchat.command("SETTEXT " + command)
+        return
+
+    if subcommand == 'clear':
+        alert.filters[key].clear()
+        alert.invalidate_filter_cache()
+        print("{} for alert '{}' has been reset to allow all.".format(filtername, alert.name))
+        return
+
+    if subcommand != 'set':
+        raise InvalidCommandException
+
+    if not stanzas:
+        raise InvalidCommandException(
+            "No stanzas specified."
+            "  To edit the filter list, use '/ALERTS {command} {alert} EDIT'"
+            "  To clear the filter list, use '/ALERTS {command} {alert} CLEAR'"
+            .format(command=event.command.upper(), alert=alert.name)
+        )
+
+    # Pad stanzas to a multiple of 2 for convenience
+    filt = []
+    for ix in range(0, len(stanzas), 2):
+        action = stanzas[ix].lower()
+        try:
+            texts = stanzas[ix+1]
+        except IndexError:  # Exceeded end of list.
+            texts = None
+
+        if action in {'allow', 'accept', '+'}:
+            allowed = True
+        elif action in {'deny', 'reject', 'block', 'ignore', '-'}:
+            allowed = False
+        else:
+            raise InvalidCommandException("Unknown action '{}', expected ALLOW or DENY".format(action))
+
+        if texts is None:
+            filt.append((allowed, None))
+            continue
+        if texts[-1] == ",":
+            raise InvalidCommandException(
+                "Near '{text}': Pattern list cannot end with a comma.  (HINT: If you were trying to specify multiple"
+                " patterns to {action}, they cannot be separated with spaces -- use 'a,b,c' not 'a, b, c')"
+                .format(text=texts, action=action)
+            )
+        texts = texts.split(",")
+        for text in texts:
+            if not text:
+                raise InvalidCommandException("Near '{}': Empty pattern in pattern list.".format(stanzas[ix+1]))
+            filt.append((allowed, factory(text)))
+
+    alert.filters[key] = filt
+    alert.invalidate_filter_cache()
+    print("Updated {} for alert '{}'".format(filtername, alert.name))
+
+
+alert_command(
+    "nicklist",
+    help="<alert> EDIT|CLEAR|(SET ALLOW|DENY pattern,pattern... ALLOW|DENY pattern,pattern...):"
+         "  Edits the nickname filter."
+)(functools.partial(cmd_filterlist, key='nick', filtername='nickname filter', factory=UserPattern))
+
+
 # noinspection PyProtectedMember
 @command("debug")
 def cmd_debug(event, name=None):
+    # noinspection PyProtectedMember
     def _print_alert():
         print(
             "Key: {key}, Name: {alert.name}, Prev={prev}, Next={next}".format(
@@ -2045,7 +2253,8 @@ def command_hook(words, word_eol, userdata):
     if not event.fn:
         print("Unknown command '{}'".format(event.command))
         print("Type '/alerts help' for full usage instructions.")
-    event.call()
+    else:
+        event.call()
     return hexchat.EAT_ALL
 
 
