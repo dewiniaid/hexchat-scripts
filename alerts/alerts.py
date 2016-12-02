@@ -198,7 +198,7 @@ import collections.abc
 import hexchat
 
 __module_name__ = "alerts"
-__module_version__ = "0.6.20161130.001"
+__module_version__ = "0.6.20161201.002"
 __module_description__ = "Custom highlighting and alert messages -- by Dewin"
 
 
@@ -1345,7 +1345,7 @@ class ChatEvent(Event):
     def hostmask(self):
         if self.is_channel:
             try:
-                return next(iter(user for user in self.current.get_list('users') if user.nick == self.nickname))
+                return next(iter(user for user in self.current.get_list('users') if user.nick == self.nick))
             except StopIteration:
                 raise ValueError("Could not find associated user in user list.")
         else:
